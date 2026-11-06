@@ -23,6 +23,9 @@ struct HatsudenApp: App {
                 }
             }
             .preferredColorScheme(.light)
+            .onChange(of: scenePhase == .active && !launchAds.isShowingLaunchCover, initial: true) { _, isInGame in
+                GameMusic.shared.setInGame(isInGame)
+            }
             .onChange(of: scenePhase, initial: true) { _, phase in
                 if phase == .active { session.model.setActive(true) }
                 if phase == .background { session.model.setActive(false) }

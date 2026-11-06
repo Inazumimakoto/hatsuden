@@ -71,6 +71,7 @@ struct ShopView: View {
                         .accessibilityHidden(true)
                 }
                 Spacer(minLength: 6)
+                musicButton
                 Button {
                     ads.cancelLoading()
                     dismiss()
@@ -105,6 +106,29 @@ struct ShopView: View {
         .overlay(alignment: .bottom) { PencilRule().stroke(ConsoleInk.edge.opacity(0.72), style: StrokeStyle(lineWidth: 1, lineCap: .round)).frame(height: 2) }
     }
 
+    private var musicButton: some View {
+        let music = GameMusic.shared
+        return Button(action: music.toggleMute) {
+            Text("♪")
+                .font(ConsoleInk.pencil(25))
+                .overlay {
+                    if music.isMuted {
+                        PencilRule()
+                            .stroke(ConsoleInk.rust, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                            .frame(width: 24, height: 2)
+                            .rotationEffect(.degrees(-40))
+                    }
+                }
+                .frame(width: 44, height: 44)
+                .paperCard(ConsoleInk.gold.opacity(0.18), line: ConsoleInk.edge)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("BGM")
+        .accessibilityValue(music.isMuted ? "オフ" : "オン")
+        .accessibilityIdentifier("shop-music-toggle")
+    }
+
     private func sectionTitle(_ title: String, code: String) -> some View {
         HStack(spacing: 8) {
             Text(title)
@@ -131,9 +155,6 @@ struct ShopView: View {
                     rewardButton(.background, title: "留守中の発電 2倍", icon: .moon, color: ConsoleInk.blue)
                 }
             }
-            Text("留守中の発電2倍が有効な間は、どうぶつは寝ません。")
-                .font(ConsoleInk.letter(10))
-                .foregroundStyle(ConsoleInk.muted)
             if AdsPrivacy.shared.optionsRequired {
                 Button(action: openAdPrivacyOptions) {
                     Text("広告のプライバシー設定")

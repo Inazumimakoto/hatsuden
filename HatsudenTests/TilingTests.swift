@@ -30,6 +30,47 @@ final class TilingTests: XCTestCase {
         }
     }
 
+    func testDeepCornerZoomRevealsTheStarterAfterAllSpeciesAreUnlocked() throws {
+        let highest = 199
+        let overviewBounds = StaircaseLayout.zoomedBounds(viewport: viewport.size, scale: 1)
+        let overview = StaircaseLayout(bounds: overviewBounds, topSpeciesFloat: Double(highest),
+                                       highestOwned: highest, pixelSize: 1 / 3)
+        XCTAssertTrue(overview.isCollapsed(0))
+
+        let deepBounds = StaircaseLayout.zoomedBounds(viewport: viewport.size, scale: pow(2, 99))
+        let deep = StaircaseLayout(bounds: deepBounds, topSpeciesFloat: Double(highest),
+                                   highestOwned: highest, pixelSize: 1 / 3)
+        XCTAssertFalse(deep.isCollapsed(0))
+        XCTAssertEqual(deep.partition.rect(for: 0), CGRect(x: -320, y: -320, width: 320, height: 320))
+        XCTAssertEqual(deep.partition.rect(for: 1), CGRect(x: -320, y: -640, width: 320, height: 320))
+        XCTAssertEqual(deep.partition.rect(for: 2), CGRect(x: -640, y: -640, width: 320, height: 640))
+
+        for slot in 0..<8 {
+            let cell = try XCTUnwrap(deep.cell(for: 0, slot: slot))
+            XCTAssertTrue(overviewBounds.contains(cell))
+            XCTAssertEqual(cell, CGRect(x: -320 + (slot % 2) * 160, y: -320 + (slot / 2) * 80,
+                                        width: 160, height: 80))
+            XCTAssertGreaterThan(StaircaseLayout.wheelDiameter(in: cell), 1 / 3)
+        }
+    }
+
+    func testCornerZoomKeepsVisibleCellsAtTheSameUniformlyScaledPositions() throws {
+        let scale: CGFloat = 3.5
+        let overview = StaircaseLayout(bounds: viewport, topSpeciesFloat: 6, highestOwned: 6, pixelSize: 1 / 3)
+        let zoomedBounds = StaircaseLayout.zoomedBounds(viewport: viewport.size, scale: scale)
+        let zoomed = StaircaseLayout(bounds: zoomedBounds, topSpeciesFloat: 6, highestOwned: 6, pixelSize: 1 / 3)
+        for species in 0...2 {
+            for slot in 0..<8 {
+                let original = try XCTUnwrap(overview.cell(for: species, slot: slot))
+                let magnified = try XCTUnwrap(zoomed.cell(for: species, slot: slot))
+                XCTAssertEqual(magnified, CGRect(x: (original.minX - viewport.maxX) * scale,
+                                                 y: (original.minY - viewport.maxY) * scale,
+                                                 width: original.width * scale,
+                                                 height: original.height * scale))
+            }
+        }
+    }
+
     func testUnlockKeepsExistingUnitsContinuousAtIntegerBoundary() throws {
         let exact = StaircaseLayout(bounds: viewport, topSpeciesFloat: 1,
                                     highestOwned: 2, pixelSize: 1 / 3)
@@ -91,6 +132,20 @@ final class TilingTests: XCTestCase {
     }
 
     #if DEBUG
+    func testDeepZoomRestoresAllStarterWheelsFromTheCornerDot() async {
+        await MainActor.run {
+            let scene = GameScene(model: GameModel.stressFixture())
+            scene.size = CGSize(width: 320, height: 640)
+            scene.registerTap()
+            XCTAssertTrue(scene.debugStarterWheelWidths.isEmpty)
+
+            scene.debugZoomToStarter()
+            let widths = scene.debugStarterWheelWidths
+            XCTAssertEqual(widths.count, 8)
+            XCTAssertTrue(widths.allSatisfy { $0 >= 60 })
+        }
+    }
+
     func testCornerHamstersStillEmitInEveryFullWaveAfterRecycling() async {
         await MainActor.run {
             let model = GameModel.stressFixture()

@@ -24,6 +24,13 @@ struct StaircaseLayout {
     private let progress: CGFloat
     private let fraction: CGFloat
 
+    /// Measure zoomed tiles from the lower-right corner to retain their detail at deep zoom.
+    static func zoomedBounds(viewport: CGSize, scale: CGFloat) -> CGRect {
+        let width = viewport.width * scale
+        let height = viewport.height * scale
+        return CGRect(x: -width, y: -height, width: width, height: height)
+    }
+
     init(bounds: CGRect, topSpeciesFloat: Double, highestOwned: Int, pixelSize: CGFloat) {
         let zoom = min(max(topSpeciesFloat, 0), Double(highestOwned))
         let previousTop = Int(zoom.rounded(.down))

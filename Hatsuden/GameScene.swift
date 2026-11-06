@@ -33,15 +33,13 @@ final class GameScene: SKScene {
     private var fieldZoom = FieldZoom.overview
     private var overviewMotion: (from: FieldZoom, elapsed: TimeInterval)?
     private var pinchStart = FieldZoom.overview
-    private var pinchAnchor = CGPoint.zero
+    private var pinchStartFactor: CGFloat = 1
+    private var fieldInput = FieldTouchInput<ObjectIdentifier>()
     private var previousTime: TimeInterval?
     private var renderingActive = true
     private var runPhase: CGFloat = 0
     private var activityElapsed = 0.0
     private var motion = RunnerMotion.sleeping
-    private weak var gestureView: SKView?
-    private var tapRecognizer: UITapGestureRecognizer?
-    private var pinchRecognizer: UIPinchGestureRecognizer?
 
     #if DEBUG
     private var stressTapPeriod: TimeInterval?
@@ -52,6 +50,18 @@ final class GameScene: SKScene {
     private var lastWaveSize = 0
     var debugActiveWaveSizes: [Int] { waves.map { $0.sprites.count } }
     var debugLastWaveFirstTexture: SKTexture? { waves.last?.sprites.first?.texture }
+    var debugStarterWheelWidths: [CGFloat] {
+        species.first?.members.compactMap { runner in
+            guard runner.node.parent != nil, let wheel = runner.art?.wheel, wheel.parent != nil else { return nil }
+            return wheel.size.width
+        } ?? []
+    }
+
+    func debugZoomToStarter() {
+        synchronizeInventory()
+        applyZoom(FieldZoom.overview.magnified(by: 1_000, highestOwned: displayedHighest))
+    }
+
     var debugHamstersAtCutoff: Int {
         guard !collapsedDot.isHidden,
               let rank = model.species.firstIndex(where: { $0.artIndex == 0 }),
@@ -85,6 +95,7 @@ final class GameScene: SKScene {
         addChild(popups)
         runners.addChild(collapsedDot)
         scaleMode = .resizeFill
+        isUserInteractionEnabled = true
     }
 
     required init?(coder: NSCoder) {
@@ -94,32 +105,20 @@ final class GameScene: SKScene {
     override func didMove(to view: SKView) {
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = true
-        removeRecognizers()
-
-        let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
-        let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap))
-        tap.require(toFail: pinch)
-        view.addGestureRecognizer(pinch)
-        view.addGestureRecognizer(tap)
-        gestureView = view
-        tapRecognizer = tap
-        pinchRecognizer = pinch
+        fieldInput.reset()
         previousTime = nil
         synchronizeInventory()
         layOutRunners()
     }
 
     override func willMove(from view: SKView) {
-        removeRecognizers()
+        fieldInput.reset()
         previousTime = nil
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         guard size != oldSize else { return }
-        applyZoom(fieldZoom.resized(from: oldSize, to: size))
-        if let from = overviewMotion?.from {
-            overviewMotion?.from = from.resized(from: oldSize, to: size)
-        }
+        fieldInput.reset()
         layOutRunners()
     }
 
@@ -128,6 +127,7 @@ final class GameScene: SKScene {
         renderingActive = active
         previousTime = nil
         if !active {
+            fieldInput.reset()
             activityElapsed = 0
             renderRunners(motion: .sleeping, delta: 0)
             while let wave = waves.popLast() {
@@ -137,10 +137,16 @@ final class GameScene: SKScene {
     }
 
     func registerTap() {
-        guard renderingActive else { return }
+        registerTaps(1)
+    }
+
+    private func registerTaps(_ count: Int) {
+        guard renderingActive, count > 0 else { return }
         synchronizeInventory()
-        for _ in 0..<model.tap() {
-            emitMoney(multiplier: model.tapMultiplier)
+        for _ in 0..<count {
+            for _ in 0..<model.tap() {
+                emitMoney(multiplier: model.tapMultiplier)
+            }
         }
     }
 
@@ -166,40 +172,39 @@ final class GameScene: SKScene {
         #endif
     }
 
-    private func removeRecognizers() {
-        if let tapRecognizer { gestureView?.removeGestureRecognizer(tapRecognizer) }
-        if let pinchRecognizer { gestureView?.removeGestureRecognizer(pinchRecognizer) }
-        gestureView = nil
-        tapRecognizer = nil
-        pinchRecognizer = nil
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard renderingActive, let time = event?.timestamp ?? touches.first?.timestamp else { return }
+        fieldInput.began(locations(of: touches), at: time)
     }
 
-    @objc private func handleTap() {
-        registerTap()
-    }
-
-    @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
-        guard let view, gesture.numberOfTouches >= 2 else { return }
-        let center = convertPoint(fromView: gesture.location(in: view))
-        switch gesture.state {
-        case .began:
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard renderingActive, let pinch = fieldInput.moved(locations(of: touches)) else { return }
+        if pinch.began {
             overviewMotion = nil
             pinchStart = fieldZoom
-            pinchAnchor = center
-            gesture.scale = 1
-        case .changed:
-            applyZoom(pinchStart.magnified(by: gesture.scale, from: pinchAnchor, to: center, viewport: size))
-        default:
-            break
+            pinchStartFactor = pinch.factor
         }
+        applyZoom(pinchStart.magnified(by: pinch.factor / pinchStartFactor, highestOwned: displayedHighest))
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let time = event?.timestamp ?? touches.first?.timestamp else { return }
+        let count = fieldInput.ended(locations(of: touches), at: time)
+        registerTaps(count)
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        fieldInput.cancelled(Set(touches.map(ObjectIdentifier.init)))
+    }
+
+    private func locations(of touches: Set<UITouch>) -> [ObjectIdentifier: CGPoint] {
+        Dictionary(uniqueKeysWithValues: touches.map { (ObjectIdentifier($0), $0.location(in: self)) })
     }
 
     private func applyZoom(_ zoom: FieldZoom) {
         guard zoom != fieldZoom else { return }
         fieldZoom = zoom
-        field.position = zoom.offset
-        field.setScale(zoom.scale)
-        layoutRevision += 1
+        layOutRunners()
     }
 
     private func updateOverview(delta: TimeInterval) {
@@ -263,13 +268,14 @@ final class GameScene: SKScene {
 
     private func layOutRunners() {
         guard size.width > 1, size.height > 1, !species.isEmpty else { return }
+        let viewport = CGRect(origin: .zero, size: size)
         let layout = StaircaseLayout(
-            bounds: CGRect(origin: .zero, size: size),
+            bounds: StaircaseLayout.zoomedBounds(viewport: size, scale: fieldZoom.scale),
             topSpeciesFloat: layoutTopSpecies,
             highestOwned: displayedHighest,
             pixelSize: pixelSize
         )
-        let dot = scenePoint(layout.partition.dot)
+        let dot = CGPoint(x: size.width + layout.partition.dot.x, y: -layout.partition.dot.y)
         layOutBackdrop()
         layoutRevision += 1
         collapsedDot.size = CGSize(width: pixelSize, height: pixelSize)
@@ -299,10 +305,17 @@ final class GameScene: SKScene {
             }
 
             for slot in 0..<GameModel.maximumOwnedPerSpecies {
-                guard let cell = layout.cell(for: index, slot: slot) else { continue }
+                guard let cornerCell = layout.cell(for: index, slot: slot) else { continue }
+                let cell = cornerCell.offsetBy(dx: size.width, dy: size.height)
                 if slot < display.members.count {
-                    position(display.members[slot], in: cell)
-                } else if min(cell.width, cell.height) >= 27 {
+                    let runner = display.members[slot]
+                    if viewport.intersects(cell) {
+                        position(runner, in: cell)
+                    } else {
+                        runner.node.removeFromParent()
+                        runner.popupOrigin = scenePoint(CGPoint(x: cell.midX, y: cell.midY))
+                    }
+                } else if viewport.intersects(cell), min(cell.width, cell.height) >= 27 {
                     showGuide(in: cell)
                 }
             }
@@ -358,14 +371,18 @@ final class GameScene: SKScene {
     }
 
     private func layOutBackdrop() {
-        if backdrop.texture == nil { backdrop.texture = fieldArt.background }
+        let texture = fieldArt.background
+        if backdrop.texture == nil { backdrop.texture = texture }
         let frame = FieldCamera.artworkFrame(
             in: CGRect(origin: .zero, size: size),
             topSpecies: layoutTopSpecies,
             lastSpecies: GameModel.catalog.count - 1
         )
-        backdrop.size = frame.size
-        backdrop.position = frame.origin
+        // Beyond the last texel, retain the corner instead of sending enormous quads to SpriteKit.
+        let textureSize = texture.size()
+        let magnification = min(fieldZoom.scale, max(textureSize.width, textureSize.height))
+        backdrop.size = CGSize(width: frame.width * magnification, height: frame.height * magnification)
+        backdrop.position = CGPoint(x: size.width - backdrop.size.width, y: frame.minY)
     }
 
     private func showGuide(in cell: CGRect) {
@@ -496,7 +513,7 @@ final class GameScene: SKScene {
                 }
                 sprite.zPosition = display.index == 0 ? 1 : 0
 
-                let anchor = fieldZoom.point(runner.popupOrigin)
+                let anchor = runner.popupOrigin
                 let room = viewport.height - anchor.y - popupHeight / 2
                 let band = room >= 77 ? 2 : (room >= 42 ? 1 : 0)
                 let direction = anchor.x >= viewport.width / 2 ? 1 : 0

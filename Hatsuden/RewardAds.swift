@@ -39,6 +39,7 @@ final class RewardAds: NSObject, FullScreenContentDelegate {
                 try loaded.canPresent(from: presenter)
                 loaded.fullScreenContentDelegate = self
                 ad = loaded
+                GameMusic.shared.setShowingReward(true)
                 loaded.present(from: presenter) {
                     _ = model.activateBoost(kind)
                 }
@@ -70,7 +71,9 @@ final class RewardAds: NSObject, FullScreenContentDelegate {
     }
 
     private func finish(message: String? = nil) {
+        let wasShowingReward = ad != nil
         ad = nil
+        if wasShowingReward { GameMusic.shared.setShowingReward(false) }
         pending = nil
         self.message = message
     }
