@@ -5,48 +5,24 @@ struct GameScreen: View {
     let session: PlaySession
     @Environment(\.scenePhase) private var scenePhase
     @State private var shopOpen = false
+    @State private var showingGameBanner = true
     @State private var offlineCredit: OfflineCredit?
 
     private var model: GameModel { session.model }
 
     var body: some View {
-        VStack(spacing: 8) {
-            topBar
-            HStack(alignment: .top, spacing: 7) {
-                PowerColumn(model: model, tap: session.scene.registerTap, openShop: { shopOpen = true })
-                    .frame(width: 56)
-                SpriteView(scene: session.scene, preferredFramesPerSecond: 120, options: [.ignoresSiblingOrder])
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .padding(3)
-                    .paperCard()
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("発電フロア")
-                    .accessibilityHint("続けてダブルタップして出力を溜める")
-                    .accessibilityAddTraits(.isButton)
-                    .accessibilityAction { session.scene.registerTap() }
-            }
-            .frame(maxHeight: .infinity)
-            AdBannerSlot()
+        VStack(spacing: 0) {
+            playArea
+            BannerAdFooter(surface: .game, isVisible: showingGameBanner)
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 4)
         .padding(.bottom, 5)
         .background {
-            ConsoleInk.paper
-                .ignoresSafeArea()
-                .onTapGesture(perform: session.scene.registerTap)
-                .overlay { NotebookPaper(asset: "ui_paper", ruled: true).ignoresSafeArea() }
+            NotebookPaper(asset: "ui_paper", ruled: true).ignoresSafeArea()
         }
         .foregroundStyle(ConsoleInk.ink)
         .accessibilityHidden(shopOpen)
-        .fullScreenCover(isPresented: $shopOpen) {
+        .fullScreenCover(isPresented: $shopOpen, onDismiss: { showingGameBanner = true }) {
             ShopView(model: model, offlineCredit: $offlineCredit)
-        }
-        .onChange(of: scenePhase, initial: true) { _, phase in
-            if phase == .active { model.setActive(true) }
-            if phase == .background { model.setActive(false) }
-            session.scene.setRenderingActive(phase == .active)
         }
         .task(id: scenePhase) {
             if scenePhase == .active { await AdsPrivacy.shared.refreshIfConfigured() }
@@ -65,6 +41,39 @@ struct GameScreen: View {
                 offlineCredit = nil
             } catch {}
         }
+    }
+
+    private var playArea: some View {
+        VStack(spacing: 8) {
+            topBar
+            HStack(alignment: .top, spacing: 7) {
+                PowerColumn(model: model, tap: session.scene.registerTap, openShop: openShop)
+                    .frame(width: 56)
+                SpriteView(scene: session.scene, preferredFramesPerSecond: 120, options: [.ignoresSiblingOrder])
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .padding(3)
+                    .paperCard()
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("発電フロア")
+                    .accessibilityHint("続けてダブルタップして出力を溜める")
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { session.scene.registerTap() }
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 4)
+        .background {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture(perform: session.scene.registerTap)
+        }
+    }
+
+    private func openShop() {
+        showingGameBanner = false
+        shopOpen = true
     }
 
     private var topBar: some View {
@@ -312,22 +321,5 @@ private struct MeterWell: View {
         .accessibilityLabel("発電メーター")
         .accessibilityValue("\(Int((level * 100).rounded()))パーセント")
         .accessibilityIdentifier("power-meter")
-    }
-}
-
-private struct AdBannerSlot: View {
-    var body: some View {
-        Color.clear
-            .frame(width: 320, height: 50)
-            .background {
-                if let art = ConsoleArtwork.image("ui_ad_frame") {
-                    Image(uiImage: art).resizable()
-                } else {
-                    PaperOutline().fill(ConsoleInk.lightPaper.opacity(0.26))
-                        .overlay(PaperOutline(variation: 2).stroke(ConsoleInk.edge.opacity(0.43),
-                            style: StrokeStyle(lineWidth: 1, lineCap: .round, dash: [6, 4, 2, 5])))
-                }
-            }
-            .accessibilityHidden(true)
     }
 }

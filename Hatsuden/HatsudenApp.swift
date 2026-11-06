@@ -3,12 +3,33 @@ import SwiftUI
 
 @main
 struct HatsudenApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var session = PlaySession()
+    @State private var launchAds = AppOpenAds.shared
 
     var body: some Scene {
         WindowGroup {
-            GameScreen(session: session)
-                .preferredColorScheme(.light)
+            Group {
+                if launchAds.isShowingLaunchCover {
+                    ZStack {
+                        NotebookPaper(asset: "ui_paper", ruled: true)
+                            .ignoresSafeArea()
+                        SketchIcon(symbol: .bulbOn, size: 96)
+                    }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("読み込み中")
+                } else {
+                    GameScreen(session: session)
+                }
+            }
+            .preferredColorScheme(.light)
+            .onChange(of: scenePhase, initial: true) { _, phase in
+                if phase == .active { session.model.setActive(true) }
+                if phase == .background { session.model.setActive(false) }
+                session.scene.setRenderingActive(phase == .active)
+                if phase == .active { launchAds.start() }
+                if phase == .background { launchAds.skipIfLoading() }
+            }
         }
     }
 }

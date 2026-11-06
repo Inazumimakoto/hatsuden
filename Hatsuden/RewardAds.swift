@@ -14,7 +14,8 @@ final class RewardAds: NSObject, FullScreenContentDelegate {
 
     func watch(_ kind: BoostKind, model: GameModel) {
         guard pending == nil, model.boostRemaining(kind) <= 0 else { return }
-        guard let adUnit = Self.adUnit(for: kind) else {
+        let placement: AdPlacement = kind == .tap ? .tapReward : .backgroundReward
+        guard let adUnit = placement.unitID else {
             message = "広告は準備中です。"
             return
         }
@@ -73,25 +74,4 @@ final class RewardAds: NSObject, FullScreenContentDelegate {
         pending = nil
         self.message = message
     }
-
-    static var hasConfiguredUnits: Bool {
-        BoostKind.allCases.contains { adUnit(for: $0) != nil }
-    }
-
-    private static func adUnit(for kind: BoostKind) -> String? {
-        #if DEBUG
-        return "ca-app-pub-3940256099942544/1712485313"
-        #else
-        guard let appID = Bundle.main.object(forInfoDictionaryKey: "GADApplicationIdentifier") as? String,
-              appID.hasPrefix("ca-app-pub-"),
-              appID.contains("~"),
-              !appID.hasPrefix("ca-app-pub-3940256099942544") else { return nil }
-        let key = kind == .tap ? "HatsudenTapRewardAdUnit" : "HatsudenBackgroundRewardAdUnit"
-        guard let id = Bundle.main.object(forInfoDictionaryKey: key) as? String,
-              id.hasPrefix("ca-app-pub-"), id.contains("/"),
-              !id.hasPrefix("ca-app-pub-3940256099942544") else { return nil }
-        return id
-        #endif
-    }
-
 }

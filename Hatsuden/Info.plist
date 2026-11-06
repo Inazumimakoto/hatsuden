@@ -7,11 +7,15 @@
 	<key>CFBundleDisplayName</key>
 	<string>発電どうぶつ</string>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-9336495538487468~9607535810</string>
 	<key>HatsudenTapRewardAdUnit</key>
-	<string></string>
+	<string>ca-app-pub-9336495538487468/9407391117</string>
 	<key>HatsudenBackgroundRewardAdUnit</key>
-	<string></string>
+	<string>ca-app-pub-9336495538487468/5049343709</string>
+	<key>HatsudenAppOpenAdUnit</key>
+	<string>ca-app-pub-9336495538487468/5484603763</string>
+	<key>HatsudenBannerAdUnit</key>
+	<string>ca-app-pub-9336495538487468/3851812107</string>
 	<key>SKAdNetworkItems</key>
 	<array>
 		<dict>

@@ -46,6 +46,7 @@ struct ShopView: View {
                 .padding(.bottom, 20)
             }
             .scrollIndicators(.hidden)
+            BannerAdFooter(surface: .shop, isVisible: !showingAdPrivacy && ads.pending == nil)
         }
         .background { NotebookPaper(asset: "ui_shop_paper", ruled: true).ignoresSafeArea() }
         .foregroundStyle(ConsoleInk.ink)

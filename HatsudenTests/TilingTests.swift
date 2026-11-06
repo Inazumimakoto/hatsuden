@@ -30,16 +30,16 @@ final class TilingTests: XCTestCase {
         }
     }
 
-    func testFractionalZoomKeepsSurvivingUnitsContinuousAtIntegerBoundary() throws {
+    func testUnlockKeepsExistingUnitsContinuousAtIntegerBoundary() throws {
         let exact = StaircaseLayout(bounds: viewport, topSpeciesFloat: 1,
                                     highestOwned: 2, pixelSize: 1 / 3)
-        let zoomed = StaircaseLayout(bounds: viewport, topSpeciesFloat: 1.000001,
-                                     highestOwned: 2, pixelSize: 1 / 3)
-        XCTAssertEqual(try XCTUnwrap(zoomed.partition.rect(for: 2)).height, 0.00032, accuracy: 0.000001)
+        let transition = StaircaseLayout(bounds: viewport, topSpeciesFloat: 1.000001,
+                                        highestOwned: 2, pixelSize: 1 / 3)
+        XCTAssertEqual(try XCTUnwrap(transition.partition.rect(for: 2)).height, 0.00032, accuracy: 0.000001)
         for species in 0...1 {
             for slot in 0..<8 {
                 let oldCell = try XCTUnwrap(exact.cell(for: species, slot: slot))
-                let newCell = try XCTUnwrap(zoomed.cell(for: species, slot: slot))
+                let newCell = try XCTUnwrap(transition.cell(for: species, slot: slot))
                 XCTAssertEqual(newCell.midX, oldCell.midX, accuracy: 0.001)
                 XCTAssertEqual(newCell.midY, oldCell.midY, accuracy: 0.001)
             }
@@ -81,7 +81,7 @@ final class TilingTests: XCTestCase {
         XCTAssertEqual(previous, viewport)
     }
 
-    func testPinchBetweenSpeciesShowsAnIntermediateBackgroundScale() {
+    func testUnlockShowsAnIntermediateBackgroundScale() {
         let start = FieldCamera.artworkFrame(in: viewport, topSpecies: 1, lastSpecies: 199)
         let middle = FieldCamera.artworkFrame(in: viewport, topSpecies: 1.5, lastSpecies: 199)
         let end = FieldCamera.artworkFrame(in: viewport, topSpecies: 2, lastSpecies: 199)

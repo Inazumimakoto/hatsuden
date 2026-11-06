@@ -22,14 +22,14 @@ final class AdsPrivacy {
 
     func refreshIfConfigured() async {
         #if !DEBUG
-        guard RewardAds.hasConfiguredUnits else { return }
+        guard AdPlacement.hasProductionUnits else { return }
         await gatherConsent()
         #endif
     }
 
     func prepare() async -> Bool {
         #if !DEBUG
-        guard RewardAds.hasConfiguredUnits else { return false }
+        guard AdPlacement.hasProductionUnits else { return false }
         await gatherConsent()
         #endif
         guard canRequestAds else { return false }

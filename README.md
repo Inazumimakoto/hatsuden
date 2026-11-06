@@ -7,8 +7,8 @@
 - アプリを閉じている間は120秒につき通常の発電1回分の割合で所持金が増えます。復帰時は閉じる前の所持金から、留守中に増えた分を数え上げて表示します。所持金と所持数は従来のセーブから引き継ぎます。
 - 売店はバスケットのボタンで全画面に開きます。前の種類を1体迎えると次が解放され、所持金が足りれば購入できます。未解放の種類は「???」と黒いシルエットで表示します。
 - 所持金は一行で、100万円未満は全桁、100万円以上はSI接頭語付きで表示します。接頭語の範囲を超える金額は指数表記です。保存と読み上げには正確な金額を使います。
-- 背景はフロア全体でつながる一枚絵です。右下のハムスターハウスから始まり、部屋と家の外、東京タワー、スカイツリー、富士山、宇宙へと範囲が広がります。200種目で全景が見えます。ピンチでも同じ絵が拡大縮小します。青い矢印で、その時点で迎えた動物の全体表示に戻ります。
-- 一番下には320 × 50 ptのバナー広告用スペースがあります。
+- 背景はフロア全体でつながる一枚絵です。右下のハムスターハウスから始まり、部屋と家の外、東京タワー、スカイツリー、富士山、宇宙へと範囲が広がります。200種目で全景が見えます。ピンチすると、指の間を中心に背景とどうぶつを配置ごと最大12倍まで拡大できます。青い矢印で全体表示に戻ります。
+- プレイ画面と売店の一番下に320 × 50 ptのバナー広告が入ります。
 
 ### 進行の目安
 
@@ -16,25 +16,28 @@
 
 新規プレイではミツバチから、成体の代表的な大きさを目安に小さい順に解放します。大きさはゲーム用の概算で、主に全長を使い、キリンなどは高さ、脚の長いカニなどは脚を含めた寸法を使っています。足つきサメは大型のサメをモデルに約4.8 m、発電怪獣と銀河発電竜は架空の寸法です。既存セーブは購入済みの動物と順番を維持し、未購入分を小さい順に並べます。 [大きさと素材IDのデータ](Hatsuden/AnimalCatalog.swift) · [NOAAのホホジロザメ資料](https://www.fisheries.noaa.gov/species/white-shark/science) · [ロンドン自然史博物館のティラノサウルス資料](https://www.nhm.ac.uk/discover/dino-directory/tyrannosaurus.html)
 
-### 売店のリワード広告
+### 広告
 
 視聴完了後に、選んだ発電量が5分間2倍になります。「連打発電」は閾値を超えたタップに適用します。「留守中の発電」はバックグラウンドにいた時間のうち有効期間と重なる分に適用し、効果中はプレイ画面でもどうぶつが起きています。2種類は同時に使えます。終了時刻はセーブされます。
+
+アプリ起動時広告は、広告設定後の3回目以降のコールド起動で、最大4秒の読み込み中に取得できたときに表示します。バナーはプレイ画面と売店の下部に固定し、連打やスクロールの操作エリアとの間に余白を確保します。両画面で同じ広告ユニットを使います。 [起動時広告のガイド](https://developers.google.com/admob/ios/app-open?hl=ja) · [バナーの配置ガイド](https://support.google.com/admob/answer/6275335?hl=ja)
 
 #### 初めてのAdMob設定
 
 1. [AdMob](https://admob.google.com/) にログインし、「アプリ」から iOS アプリとして「発電どうぶつ」を追加します。App Storeにまだ掲載していなければ、掲載済みかの質問で「いいえ」を選びます。 [アプリの登録手順](https://support.google.com/admob/answer/9989980?hl=ja)
-2. アプリ内の「広告ユニット」で、形式を「リワード」にして **連打発電2倍** と **留守中発電2倍** の2枠を作ります。報酬の数は `1`、報酬アイテムは `5分ブースト` と入力できます。 [リワード枠の作成手順](https://support.google.com/admob/answer/7311747?hl=ja)
-3. 発行されたIDを [Info.plist](Hatsuden/Info.plist) に入れます。必要なのは次の3個です。 [IDの確認手順](https://support.google.com/admob/answer/7356431?hl=ja)
+2. アプリ内の「広告ユニット」で、形式を「リワード」にして **連打発電2倍** と **留守中発電2倍** の2枠を作ります。報酬の数は `1`、報酬アイテムは `5分ブースト` にします。Google AdMobのみで配信する場合、パートナーでの入札はオフのままにします。 [リワード枠の作成手順](https://support.google.com/admob/answer/7311747?hl=ja)
+3. 「広告ユニットを追加」から、形式が「アプリ起動時広告」の **アプリ起動** と、形式が「バナー」の **下部バナー** を1枠ずつ作ります。 [起動時広告枠の作成手順](https://support.google.com/admob/answer/9620632?hl=ja) · [バナー枠の作成手順](https://support.google.com/admob/answer/7311346?hl=ja)
+4. アプリIDと4枠の広告ユニットIDを [Info.plist](Hatsuden/Info.plist) に入れます。 [IDの確認手順](https://support.google.com/admob/answer/7356431?hl=ja)
 
 | コピーする値 | 設定先 |
 | --- | --- |
 | アプリID（`ca-app-pub-…~…`） | `GADApplicationIdentifier` |
 | 連打用の広告ユニットID（`ca-app-pub-…/…`） | `HatsudenTapRewardAdUnit` |
 | 留守中用の広告ユニットID（`ca-app-pub-…/…`） | `HatsudenBackgroundRewardAdUnit` |
+| 起動時広告のユニットID（`ca-app-pub-…/…`） | `HatsudenAppOpenAdUnit` |
+| バナーのユニットID（`ca-app-pub-…/…`） | `HatsudenBannerAdUnit` |
 
-Debugでは [AdMob公式のリワードテスト広告](https://developers.google.com/admob/ios/rewarded) を使います。本番配信に向けては、AdMobの「プライバシーとメッセージ」で必要な同意メッセージを設定し、App Store公開後にストアの掲載情報をリンクして審査を受けます。アプリは設定済みの同意メッセージを必要に応じて表示します。 [同意メッセージの設定](https://developers.google.com/admob/ios/privacy) · [配信準備の審査](https://support.google.com/admob/answer/10564477?hl=ja)
-
-画面下はバナー用の枠です。連打するゲーム画面での誤タップを避けるため、広告配信は売店のリワード枠から始めます。 [Googleのバナー配置ガイド](https://support.google.com/admob/answer/6275345?hl=ja)
+Debugでは各形式のテスト用IDを使います。本番配信に向けては、AdMobの「プライバシーとメッセージ」で必要な同意メッセージを設定し、App Store公開後にストアの掲載情報をリンクして審査を受けます。アプリは設定済みの同意メッセージを必要に応じて表示します。 [テスト広告](https://developers.google.com/admob/ios/test-ads?hl=ja) · [同意メッセージの設定](https://developers.google.com/admob/ios/privacy) · [配信準備の審査](https://support.google.com/admob/answer/10564477?hl=ja)
 
 ## 手描き素材のリスト
 

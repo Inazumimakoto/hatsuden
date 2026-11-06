@@ -6,6 +6,7 @@ final class GameScene: SKScene {
     private let model: GameModel
     private let art = ArtProvider.shared
     private let fieldArt = FieldArtwork()
+    private let field = SKNode()
     private let backdrop = SKSpriteNode()
     private let guides = SKNode()
     private let runners = SKNode()
@@ -27,9 +28,12 @@ final class GameScene: SKScene {
     private static let wakeDuration: TimeInterval = 0.16
     private static let runDelay: TimeInterval = 0.40
 
-    private var topSpeciesFloat: Double
-    private var zoomMotion: ZoomMotion?
-    private var pinchStart = 0.0
+    private var layoutTopSpecies: Double
+    private var unlockMotion: UnlockMotion?
+    private var fieldZoom = FieldZoom.overview
+    private var overviewMotion: (from: FieldZoom, elapsed: TimeInterval)?
+    private var pinchStart = FieldZoom.overview
+    private var pinchAnchor = CGPoint.zero
     private var previousTime: TimeInterval?
     private var renderingActive = true
     private var runPhase: CGFloat = 0
@@ -63,7 +67,7 @@ final class GameScene: SKScene {
 
     init(model: GameModel) {
         self.model = model
-        topSpeciesFloat = Double(model.highestOwned)
+        layoutTopSpecies = Double(model.highestOwned)
         super.init(size: CGSize(width: 1, height: 1))
 
         backgroundColor = FieldInk.paper
@@ -74,9 +78,10 @@ final class GameScene: SKScene {
         popups.zPosition = 7
         collapsedDot.zPosition = 2
         collapsedDot.isHidden = true
-        addChild(backdrop)
-        addChild(guides)
-        addChild(runners)
+        addChild(field)
+        field.addChild(backdrop)
+        field.addChild(guides)
+        field.addChild(runners)
         addChild(popups)
         runners.addChild(collapsedDot)
         scaleMode = .resizeFill
@@ -111,6 +116,10 @@ final class GameScene: SKScene {
 
     override func didChangeSize(_ oldSize: CGSize) {
         guard size != oldSize else { return }
+        applyZoom(fieldZoom.resized(from: oldSize, to: size))
+        if let from = overviewMotion?.from {
+            overviewMotion?.from = from.resized(from: oldSize, to: size)
+        }
         layOutRunners()
     }
 
@@ -136,7 +145,8 @@ final class GameScene: SKScene {
     }
 
     func resetZoom() {
-        animateZoom(to: Double(model.highestOwned), duration: 0.50)
+        guard fieldZoom != .overview else { return }
+        overviewMotion = (from: fieldZoom, elapsed: 0)
     }
 
     override func update(_ currentTime: TimeInterval) {
@@ -145,7 +155,8 @@ final class GameScene: SKScene {
         previousTime = currentTime
 
         synchronizeInventory()
-        updateZoom(delta: delta)
+        updateUnlock(delta: delta)
+        updateOverview(delta: delta)
         model.update(delta: delta)
         updateRunners(delta: min(delta, 0.05))
         updateMoney(delta: delta)
@@ -168,36 +179,45 @@ final class GameScene: SKScene {
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        guard let view, gesture.numberOfTouches >= 2 else { return }
+        let center = convertPoint(fromView: gesture.location(in: view))
         switch gesture.state {
         case .began:
-            zoomMotion = nil
-            pinchStart = topSpeciesFloat
-        case .changed, .ended:
-            let highest = Double(model.highestOwned)
-            let stepsPerDoubling = max(1.5, highest / 8)
-            let scale = max(0.01, Double(gesture.scale))
-            topSpeciesFloat = min(highest, max(0, pinchStart - log2(scale) * stepsPerDoubling))
-            layOutRunners()
+            overviewMotion = nil
+            pinchStart = fieldZoom
+            pinchAnchor = center
+            gesture.scale = 1
+        case .changed:
+            applyZoom(pinchStart.magnified(by: gesture.scale, from: pinchAnchor, to: center, viewport: size))
         default:
             break
         }
     }
 
-    private func animateZoom(to target: Double, duration: TimeInterval) {
-        guard target != topSpeciesFloat else {
-            zoomMotion = nil
-            return
-        }
-        zoomMotion = ZoomMotion(from: topSpeciesFloat, to: target, duration: duration)
+    private func applyZoom(_ zoom: FieldZoom) {
+        guard zoom != fieldZoom else { return }
+        fieldZoom = zoom
+        field.position = zoom.offset
+        field.setScale(zoom.scale)
+        layoutRevision += 1
     }
 
-    private func updateZoom(delta: TimeInterval) {
-        guard var motion = zoomMotion else { return }
+    private func updateOverview(delta: TimeInterval) {
+        guard var motion = overviewMotion else { return }
         motion.elapsed += delta
-        let progress = min(1, motion.elapsed / motion.duration)
+        let progress = min(1, CGFloat(motion.elapsed / 0.50))
         let eased = progress * progress * (3 - 2 * progress)
-        topSpeciesFloat = progress == 1 ? motion.to : motion.from + (motion.to - motion.from) * eased
-        zoomMotion = progress == 1 ? nil : motion
+        applyZoom(motion.from.interpolatedToOverview(progress: eased))
+        overviewMotion = progress == 1 ? nil : motion
+    }
+
+    private func updateUnlock(delta: TimeInterval) {
+        guard var motion = unlockMotion else { return }
+        motion.elapsed += delta
+        let progress = min(1, motion.elapsed / 0.60)
+        let eased = progress * progress * (3 - 2 * progress)
+        layoutTopSpecies = progress == 1 ? motion.to : motion.from + (motion.to - motion.from) * eased
+        unlockMotion = progress == 1 ? nil : motion
         layOutRunners()
     }
 
@@ -224,7 +244,8 @@ final class GameScene: SKScene {
         }
 
         if wasInitialized && highest > displayedHighest {
-            animateZoom(to: Double(highest), duration: 0.60)
+            unlockMotion = UnlockMotion(from: layoutTopSpecies, to: Double(highest))
+            resetZoom()
         }
         displayedHighest = highest
         displayedCounts = counts
@@ -244,7 +265,7 @@ final class GameScene: SKScene {
         guard size.width > 1, size.height > 1, !species.isEmpty else { return }
         let layout = StaircaseLayout(
             bounds: CGRect(origin: .zero, size: size),
-            topSpeciesFloat: topSpeciesFloat,
+            topSpeciesFloat: layoutTopSpecies,
             highestOwned: displayedHighest,
             pixelSize: pixelSize
         )
@@ -268,8 +289,7 @@ final class GameScene: SKScene {
                 continue
             }
 
-            // A higher tier lies above the viewport when zoomed in. Its
-            // rewards enter at that edge until its own tile is visible again.
+            // A newly purchased tier waits at the top edge until its tile enters.
             guard layout.partition.rect(for: index) != nil else {
                 for runner in display.members {
                     runner.popupOrigin = CGPoint(x: min(25, size.width / 2), y: max(0, size.height - 8))
@@ -341,7 +361,7 @@ final class GameScene: SKScene {
         if backdrop.texture == nil { backdrop.texture = fieldArt.background }
         let frame = FieldCamera.artworkFrame(
             in: CGRect(origin: .zero, size: size),
-            topSpecies: topSpeciesFloat,
+            topSpecies: layoutTopSpecies,
             lastSpecies: GameModel.catalog.count - 1
         )
         backdrop.size = frame.size
@@ -476,7 +496,7 @@ final class GameScene: SKScene {
                 }
                 sprite.zPosition = display.index == 0 ? 1 : 0
 
-                let anchor = runner.popupOrigin
+                let anchor = fieldZoom.point(runner.popupOrigin)
                 let room = viewport.height - anchor.y - popupHeight / 2
                 let band = room >= 77 ? 2 : (room >= 42 ? 1 : 0)
                 let direction = anchor.x >= viewport.width / 2 ? 1 : 0
@@ -546,10 +566,9 @@ final class GameScene: SKScene {
     #endif
 }
 
-private struct ZoomMotion {
+private struct UnlockMotion {
     let from: Double
     let to: Double
-    let duration: TimeInterval
     var elapsed: TimeInterval = 0
 }
 
