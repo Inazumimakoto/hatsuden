@@ -70,4 +70,27 @@ final class FieldTouchInputTests: XCTestCase {
     private func point(_ x: Int) -> CGPoint {
         CGPoint(x: x, y: 0)
     }
+
+    func testTwoFingerPanMovesCameraWithoutGeneratingTaps() throws {
+        var input = FieldTouchInput<Int>()
+        input.began([1: point(10), 2: point(70)], at: 0)
+        let pan = try XCTUnwrap(input.moved([1: point(35), 2: point(95)]))
+        XCTAssertTrue(pan.began)
+        XCTAssertEqual(pan.incrementalFactor, 1, accuracy: 0.001)
+        XCTAssertEqual(pan.previousCenter, point(40))
+        XCTAssertEqual(pan.center, point(65))
+        XCTAssertEqual(input.ended([1: point(35), 2: point(95)], at: 0.2), 0)
+    }
+
+    func testReturningFromThirdFingerDoesNotReplayPausedMovement() throws {
+        var input = FieldTouchInput<Int>()
+        input.began([1: point(10), 2: point(70)], at: 0)
+        _ = input.moved([2: point(90)])
+        input.began([3: point(140)], at: 0.1)
+        XCTAssertNil(input.moved([1: point(50), 2: point(130)]))
+        XCTAssertEqual(input.ended([3: point(140)], at: 0.15), 1)
+        let resumed = try XCTUnwrap(input.moved([1: point(51), 2: point(131)]))
+        XCTAssertEqual(resumed.incrementalFactor, 1, accuracy: 0.001)
+        XCTAssertEqual(resumed.center.x - resumed.previousCenter.x, 1, accuracy: 0.001)
+    }
 }

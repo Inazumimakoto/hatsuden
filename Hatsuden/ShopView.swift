@@ -273,7 +273,6 @@ private struct ShopRow: View {
     @State private var purchaseToken = 0
 
     private var owned: Int { model.counts[species.index] }
-    private var isMax: Bool { owned >= GameModel.maximumOwnedPerSpecies }
     private var price: Yen { model.price(for: species.index) }
     private var affordable: Bool { model.canAfford(species.index) }
 
@@ -305,20 +304,12 @@ private struct ShopRow: View {
                     .foregroundStyle(ConsoleInk.muted)
                     .lineLimit(1)
                 if !isNew {
-                    HStack(spacing: 3) {
-                        ForEach(0..<GameModel.maximumOwnedPerSpecies, id: \.self) { index in
-                            PencilRule()
-                                .stroke(index < owned ? ConsoleInk.rust : ConsoleInk.edge.opacity(0.35),
-                                        style: StrokeStyle(lineWidth: 2, lineCap: .round))
-                                .frame(width: 6, height: 4)
-                                .rotationEffect(.degrees(-16))
-                        }
-                        Text("\(owned)/\(GameModel.maximumOwnedPerSpecies)")
-                            .font(ConsoleInk.pencil(8))
-                            .foregroundStyle(ConsoleInk.muted)
-                    }
-                    .accessibilityElement(children: .ignore)
-                    .accessibilityLabel("\(owned)体所有")
+                    Text("\(owned.formatted())体")
+                        .font(ConsoleInk.letter(10))
+                        .foregroundStyle(ConsoleInk.rust)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.65)
+                        .accessibilityLabel("\(owned)体所有")
                 }
             }
             .accessibilityElement(children: .combine)
@@ -331,41 +322,30 @@ private struct ShopRow: View {
         .sensoryFeedback(.success, trigger: purchaseToken)
     }
 
-    @ViewBuilder
     private var purchaseControl: some View {
-        if isMax {
-            Text("MAX")
-                .font(ConsoleInk.pencil(12))
-                .tracking(1)
-                .foregroundStyle(ConsoleInk.muted)
-                .frame(width: 85, height: 38)
-                .paperCard(ConsoleInk.edge.opacity(0.14))
-                .accessibilityLabel("最大数に到達")
-        } else {
-            Button {
-                if model.purchase(species.index) {
-                    onPurchase()
-                    purchaseToken += 1
-                }
-            } label: {
-                VStack(spacing: 2) {
-                    Text(isNew ? "迎える" : "追加する")
-                        .font(ConsoleInk.letter(9))
-                    Text("¥\(Currency.compact(price))")
-                        .font(ConsoleInk.pencil(12))
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                }
-                .foregroundStyle(affordable ? ConsoleInk.ink : ConsoleInk.muted)
-                .padding(.horizontal, 3)
-                .frame(width: 88, height: 44)
-                .paperCard(affordable ? ConsoleInk.gold.opacity(0.68) : ConsoleInk.edge.opacity(0.15),
-                           line: affordable ? ConsoleInk.rust : ConsoleInk.edge)
+        Button {
+            if model.purchase(species.index) {
+                onPurchase()
+                purchaseToken += 1
             }
-            .buttonStyle(.plain)
-            .disabled(!affordable)
-            .accessibilityLabel("\(species.name)を\(isNew ? "迎える" : "追加する")、\(Currency.full(price))円")
-            .accessibilityIdentifier("buy-\(species.id)")
+        } label: {
+            VStack(spacing: 2) {
+                Text(isNew ? "迎える" : "追加する")
+                    .font(ConsoleInk.letter(9))
+                Text("¥\(Currency.compact(price))")
+                    .font(ConsoleInk.pencil(12))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.55)
+            }
+            .foregroundStyle(affordable ? ConsoleInk.ink : ConsoleInk.muted)
+            .padding(.horizontal, 3)
+            .frame(width: 88, height: 44)
+            .paperCard(affordable ? ConsoleInk.gold.opacity(0.68) : ConsoleInk.edge.opacity(0.15),
+                       line: affordable ? ConsoleInk.rust : ConsoleInk.edge)
         }
+        .buttonStyle(.plain)
+        .disabled(!affordable)
+        .accessibilityLabel("\(species.name)を\(isNew ? "迎える" : "追加する")、\(Currency.full(price))円")
+        .accessibilityIdentifier("buy-\(species.id)")
     }
 }

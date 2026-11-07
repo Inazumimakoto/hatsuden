@@ -4,7 +4,7 @@ import XCTest
 
 final class GameModelTests: XCTestCase {
     @MainActor
-    func testSpeciesUnlockSequentiallyAndAdditionalAnimalsStopAtEight() async {
+    func testSpeciesUnlockSequentiallyAndEarlyGamePricesArePreserved() async {
         let catalog = GameModel.catalog
         XCTAssertEqual(catalog.count, 200)
         XCTAssertEqual(Set(catalog.map(\.name)).count, 200)
@@ -35,9 +35,9 @@ final class GameModelTests: XCTestCase {
         XCTAssertEqual(model.counts[0], 8)
         XCTAssertTrue(model.isUnlocked(1))
         XCTAssertFalse(model.canAfford(1), "Filling the stage still leaves the next adoption to earn")
-        let balanceAtCap = model.balance
+        let balanceBeforeUnaffordablePurchase = model.balance
         XCTAssertFalse(model.purchase(0))
-        XCTAssertEqual(model.balance, balanceAtCap)
+        XCTAssertEqual(model.balance, balanceBeforeUnaffordablePurchase)
 
         for _ in 0..<4 { XCTAssertEqual(model.tap(), 0) }
         for _ in 0..<239 { XCTAssertEqual(model.tap(), 1) }
@@ -47,6 +47,50 @@ final class GameModelTests: XCTestCase {
         XCTAssertTrue(model.isUnlocked(2))
         XCTAssertEqual(model.incomePerPulse, 17)
         XCTAssertEqual(GameModel(defaults: defaults).counts.prefix(3), [8, 1, 0])
+    }
+
+    @MainActor
+    func testAdditionalAnimalsContinuePastEightAndPersist() async {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = #"{"balance":"1000000","counts":[1],"savedAt":0,"ownedArtIndices":[182]}"#
+        defaults.set(Data(fixture.utf8), forKey: "hatsuden.save.v3")
+
+        let model = GameModel(defaults: defaults)
+        for _ in 1..<8 { XCTAssertTrue(model.purchase(0)) }
+        XCTAssertEqual(model.price(for: 0), 60)
+        XCTAssertTrue(model.canAfford(0))
+        for _ in 8..<25 { XCTAssertTrue(model.purchase(0)) }
+        XCTAssertEqual(model.counts[0], 25)
+        XCTAssertEqual(model.totalAnimals, 25)
+        XCTAssertEqual(model.incomePerPulse, 25)
+        XCTAssertEqual(model.price(for: 0), 162)
+
+        XCTAssertTrue(model.purchase(1), "The next species is unlocked by ownership, without a count requirement")
+        XCTAssertEqual(model.incomePerPulse, 34)
+        let reloaded = GameModel(defaults: defaults)
+        XCTAssertEqual(reloaded.counts.prefix(3), [25, 1, 0])
+        XCTAssertEqual(reloaded.balance, model.balance)
+        XCTAssertEqual(reloaded.incomePerPulse, model.incomePerPulse)
+        XCTAssertEqual(reloaded.species.map(\.id), model.species.map(\.id))
+    }
+
+    @MainActor
+    func testExtremeStoredCountsDoNotOverflowPricingOrTotals() async {
+        let (defaults, suite) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let fixture = "{\"balance\":\"10000000000000000000000000000000000000000\",\"counts\":[\(Int.max),\(Int.max)],\"savedAt\":0,\"ownedArtIndices\":[182,181]}"
+        defaults.set(Data(fixture.utf8), forKey: "hatsuden.save.v3")
+
+        let model = GameModel(defaults: defaults)
+        XCTAssertEqual(model.counts.prefix(2), [Int.max, Int.max])
+        XCTAssertEqual(model.totalAnimals, Int.max)
+        XCTAssertEqual(model.price(for: 0), Yen(UInt64(Int.max)) * 6 + 12)
+        XCTAssertEqual(model.price(for: 1), Yen(UInt64(Int.max)) * 90 + 198)
+        XCTAssertFalse(model.canAfford(0), "Stop only at the representable count to prevent an overflowing increment")
+        XCTAssertFalse(model.purchase(0))
+        XCTAssertFalse(model.canAfford(-1))
+        XCTAssertFalse(model.canAfford(model.counts.count))
     }
 
     @MainActor

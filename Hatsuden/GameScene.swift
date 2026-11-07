@@ -1,45 +1,26 @@
 import SpriteKit
 import UIKit
 
+/// Physics positions, painted scenery and the free pileCamera all share one world.
 @MainActor
 final class GameScene: SKScene {
     private let model: GameModel
     private let art = ArtProvider.shared
-    private let fieldArt = FieldArtwork()
-    private let fieldCanvas = FieldCanvas()
-    private let field = SKNode()
-    private let backdrop = SKNode()
-    private lazy var canvasPaper = CanvasPaper(texture: fieldArt.customBackground)
-    private let canvasDetails = SKNode()
-    private var backdropDetails: [Int: SKSpriteNode] = [:]
-    private var backdropMarks: [FieldMotif: SKSpriteNode] = [:]
-    private var paintedDepth: Double?
-    private var paintedSize = CGSize.zero
-    private let guides = SKNode()
+    private let wheelSizes: PileWheelSizes
+    private let scenery: PileBackdrop
+    private var world = PileWorld(bounds: GameScene.initialBounds)
+    private var pileCamera = PileCamera(worldBounds: GameScene.initialBounds, viewport: CGSize(width: 1, height: 1))
     private let runners = SKNode()
     private let popups = SKNode()
-    private let collapsedDot = SKSpriteNode(color: FieldInk.dark, size: .zero)
-    private var guideNodes: [SKSpriteNode] = []
-    private var guideCount = 0
+    private let boxOutline = SKShapeNode()
     private var species: [SpeciesDisplay] = []
+    private var runnerByID: [Int: RunnerDisplay] = [:]
     private var animatedRunners: [RunnerDisplay] = []
-    private var displayedCounts: ArraySlice<Int> = []
-    private var displayedHighest = 0
-
-    private var wavePool: [MoneyWave] = []
-    private var waves: [MoneyWave] = []
-    private var waveNumber = 0
-    private var layoutRevision = 0
-    private static let popupLifetime: TimeInterval = 0.72
-    private static let popupHeight: CGFloat = 20
-    private static let wakeDuration: TimeInterval = 0.16
-    private static let runDelay: TimeInterval = 0.40
-
-    private var unlockMotion: UnlockMotion?
-    private var fieldZoom = FieldZoom.overview
-    private var overviewMotion: (from: FieldZoom, elapsed: TimeInterval)?
-    private var pinchStart = FieldZoom.overview
-    private var pinchStartFactor: CGFloat = 1
+    private var displayedCounts: [Int] = []
+    private var pending: [Arrival] = []
+    private var arrivalElapsed: TimeInterval = 0
+    private var arrivalDelay: TimeInterval = 0
+    private var cameraMotion: CameraMotion?
     private var fieldInput = FieldTouchInput<ObjectIdentifier>()
     private var previousTime: TimeInterval?
     private var renderingActive = true
@@ -47,6 +28,33 @@ final class GameScene: SKScene {
     private var runPhase: CGFloat = 0
     private var activityElapsed = 0.0
     private var motion = RunnerMotion.sleeping
+    private var lastCamera: PileCamera?
+    private var layoutDirty = false
+    private var saveElapsed: TimeInterval = 0
+    private var lastShake: TimeInterval = -.infinity
+    private var shakeStrength: CGFloat = 1
+    private var wavePool: [MoneyWave] = []
+    private var waves: [MoneyWave] = []
+    private var waveNumber = 0
+    private var layoutRevision = 0
+    private static let initialBounds = CGRect(x: -240, y: 0, width: 240, height: 400)
+    private static let popupLifetime: TimeInterval = 0.72
+    private static let popupHeight: CGFloat = 20
+    private static let wakeDuration: TimeInterval = 0.16
+    private static let runDelay: TimeInterval = 0.40
+
+    private struct Arrival: Codable { let species: Int; let slot: Int }
+    private struct LayoutSave: Codable {
+        let artIndices: [Int]
+        let snapshot: PileWorldSnapshot
+        let pending: [Arrival]
+    }
+    private struct CameraMotion {
+        let from: PileCamera
+        let to: PileCamera
+        var elapsed: TimeInterval = 0
+        let duration: TimeInterval
+    }
 
     #if DEBUG
     private var stressTapPeriod: TimeInterval?
@@ -57,44 +65,31 @@ final class GameScene: SKScene {
     private var lastWaveSize = 0
     var debugActiveWaveSizes: [Int] { waves.map { $0.sprites.count } }
     var debugLastWaveFirstTexture: SKTexture? { waves.last?.sprites.first?.texture }
-    var debugBackdropDepth: Double { backdropDepth }
-    var debugBackdropMarks: [FieldMotif: CGRect] {
-        backdropMarks.filter { !$0.value.isHidden }.mapValues(\.frame)
+    var debugCamera: PileCamera { pileCamera }
+    var debugWorld: PileWorld { world }
+    var debugBackdropMarks: [FieldMotif: CGRect] { scenery.markFrames }
+    var debugCanvasDetails: [Int: CGRect] { scenery.detailFrames }
+    var debugBackdropFrame: CGRect { scenery.referenceFrame }
+    var debugPendingCount: Int { pending.count }
+    func debugSetZoom(factor: CGFloat, at anchor: CGPoint? = nil) {
+        synchronizeInventory()
+        cameraMotion = nil
+        pileCamera.magnify(by: factor, at: anchor ?? CGPoint(x: size.width / 2, y: size.height / 2))
+        projectWorld()
     }
-    var debugCanvasDetails: [Int: CGRect] { backdropDetails.mapValues(\.frame) }
-    var debugBackdropFrame: CGRect {
-        let scale = unlockMotion?.cameraScale ?? fieldZoom.scale
-        return CGRect(x: size.width - size.width * scale, y: 0,
-                      width: size.width * scale, height: size.height * scale)
+    func debugPan(by translation: CGPoint) {
+        cameraMotion = nil
+        pileCamera.pan(by: translation)
+        projectWorld()
     }
     func debugRunnerFrame(species index: Int, slot: Int) -> CGRect? {
         guard species.indices.contains(index), species[index].members.indices.contains(slot) else { return nil }
         let runner = species[index].members[slot]
-        guard runner.node.parent != nil, let wheel = runner.art?.wheel, wheel.parent != nil else { return nil }
-        let diameter = wheel.size.width * runner.node.xScale
-        return CGRect(x: runner.node.position.x - diameter / 2, y: runner.node.position.y - diameter / 2,
-                      width: diameter, height: diameter)
+        guard let wheel = world.wheels.first(where: { $0.id == runner.worldID }) else { return nil }
+        let center = pileCamera.screenPoint(fromWorld: wheel.position)
+        let diameter = wheel.radius * 2 * pileCamera.scale
+        return CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
     }
-    var debugStarterWheelWidths: [CGFloat] {
-        (0..<GameModel.maximumOwnedPerSpecies).compactMap { debugRunnerFrame(species: 0, slot: $0)?.width }
-    }
-
-    func debugZoomToStarter() {
-        debugSetZoom(factor: 1_000)
-    }
-
-    func debugSetZoom(factor: CGFloat) {
-        synchronizeInventory()
-        applyZoom(FieldZoom.overview.magnified(by: factor, highestOwned: displayedHighest))
-    }
-
-    var debugHamstersAtCutoff: Int {
-        guard !collapsedDot.isHidden,
-              let rank = model.species.firstIndex(where: { $0.artIndex == 0 }),
-              species.indices.contains(rank) else { return 0 }
-        return species[rank].members.filter { $0.popupOrigin == collapsedDot.position }.count
-    }
-
     func enableParticleStress(tapsPerSecond: Double = 10) {
         guard tapsPerSecond.isFinite, tapsPerSecond > 0 else { return }
         stressTapPeriod = 1 / tapsPerSecond
@@ -103,50 +98,49 @@ final class GameScene: SKScene {
 
     init(model: GameModel) {
         self.model = model
+        wheelSizes = PileWheelSizes(species: model.species)
+        scenery = PileBackdrop(sizes: wheelSizes)
         super.init(size: CGSize(width: 1, height: 1))
-
         backgroundColor = FieldInk.paper
-        backdrop.zPosition = 0
-        guides.zPosition = 1
+        scenery.node.zPosition = 0
         runners.zPosition = 3
+        boxOutline.zPosition = 4
         popups.zPosition = 7
-        collapsedDot.zPosition = 2
-        collapsedDot.isHidden = true
-        addChild(field)
-        field.addChild(backdrop)
-        backdrop.addChild(canvasPaper.node)
-        canvasDetails.zPosition = 0.005
-        backdrop.addChild(canvasDetails)
-        field.addChild(guides)
-        field.addChild(runners)
+        boxOutline.strokeColor = FieldInk.dark.withAlphaComponent(0.8)
+        boxOutline.lineWidth = 2.3
+        boxOutline.fillColor = .clear
+        addChild(scenery.node)
+        addChild(runners)
+        addChild(boxOutline)
         addChild(popups)
-        runners.addChild(collapsedDot)
         scaleMode = .resizeFill
         isUserInteractionEnabled = true
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("GameScene is initialized with a GameModel.")
-    }
+    required init?(coder: NSCoder) { fatalError("GameScene requires GameModel") }
 
     override func didMove(to view: SKView) {
         view.ignoresSiblingOrder = true
         view.isMultipleTouchEnabled = true
         fieldInput.reset()
         previousTime = nil
+        pileCamera.resize(viewport: size)
         synchronizeInventory()
-        layOutRunners()
+        projectWorld()
     }
 
     override func willMove(from view: SKView) {
+        saveLayout()
         fieldInput.reset()
         previousTime = nil
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         guard size != oldSize else { return }
+        cameraMotion = nil
+        pileCamera.resize(viewport: size)
         fieldInput.reset()
-        layOutRunners()
+        projectWorld()
     }
 
     func setRenderingActive(_ active: Bool) {
@@ -154,99 +148,92 @@ final class GameScene: SKScene {
         renderingActive = active
         previousTime = nil
         if !active {
+            saveLayout()
             fieldInput.reset()
             activityElapsed = 0
             renderRunners(motion: .sleeping, delta: 0)
-            while let wave = waves.popLast() {
-                recycle(wave)
-            }
+            while let wave = waves.popLast() { recycle(wave) }
         }
-    }
-
-    func registerTap() {
-        registerTaps(1)
     }
 
     func setShopPresented(_ presented: Bool) {
         guard isShopPresented != presented else { return }
         isShopPresented = presented
         fieldInput.reset()
-        if presented, unlockMotion != nil {
-            fieldZoom = .overview
-            unlockMotion = nil
-            layOutRunners()
-        }
-        if !presented {
-            previousTime = nil
-            synchronizeInventory()
-        }
+        previousTime = nil
+        if presented { saveLayout() }
+        else { synchronizeInventory() }
     }
 
-    func synchronizeShopAdditions() {
-        guard isShopPresented else { return }
-        // Update the ranks already on the field before the cover begins to close.
-        // New ranks wait for the reveal once the cover has fully disappeared.
-        applyInventory(model.counts.prefix(displayedCounts.count))
-    }
+    // Purchases wait at the chute until the full-screen shop has closed.
+    func synchronizeShopAdditions() {}
+
+    func registerTap() { registerTaps(1) }
 
     private func registerTaps(_ count: Int) {
         guard renderingActive, !isShopPresented, count > 0 else { return }
         synchronizeInventory()
         for _ in 0..<count {
-            for _ in 0..<model.tap() {
-                emitMoney(multiplier: model.tapMultiplier)
-            }
+            for _ in 0..<model.tap() { emitMoney(multiplier: model.tapMultiplier) }
         }
     }
 
+    func shake() {
+        guard renderingActive, !isShopPresented else { return }
+        synchronizeInventory()
+        let now = ProcessInfo.processInfo.systemUptime
+        shakeStrength = now - lastShake < 0.75 ? min(2.2, shakeStrength + 0.30) : 1
+        lastShake = now
+        world.shake(strength: shakeStrength)
+        layoutDirty = true
+        projectWorld()
+    }
+
     func resetZoom() {
-        guard unlockMotion == nil, fieldZoom != .overview else { return }
-        overviewMotion = (from: fieldZoom, elapsed: 0)
+        var target = pileCamera
+        target.reset()
+        animateCamera(to: target, duration: 0.65)
     }
 
     override func update(_ currentTime: TimeInterval) {
         guard renderingActive else { return }
-        let delta = previousTime.map { max(0, currentTime - $0) } ?? 0
+        let actualDelta = previousTime.map { max(0, currentTime - $0) } ?? 0
+        let delta = min(0.067, actualDelta)
         previousTime = currentTime
-
         synchronizeInventory()
         if !isShopPresented {
-            updateUnlock(delta: delta)
-            updateOverview(delta: delta)
+            updateCamera(delta: delta)
+            updateArrivals(delta: delta)
+            let moving = world.isMoving
+            world.advance(delta: delta, minimumCollisionRadius: 1.5 / pileCamera.scale)
+            if moving { layoutDirty = true }
+            if moving || lastCamera != pileCamera { projectWorld() }
+            saveElapsed += actualDelta
+            if saveElapsed >= 5 { saveLayout() }
         }
-        model.update(delta: delta)
-        updateRunners(delta: min(delta, 0.05))
-        updateMoney(delta: delta)
-
+        model.update(delta: actualDelta)
+        updateRunners(delta: delta)
+        updateMoney(delta: actualDelta)
         #if DEBUG
-        updateStress(delta: delta)
+        updateStress(delta: actualDelta)
         #endif
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard renderingActive, let time = event?.timestamp ?? touches.first?.timestamp else { return }
+        guard renderingActive, !isShopPresented, let time = event?.timestamp ?? touches.first?.timestamp else { return }
         fieldInput.began(locations(of: touches), at: time)
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard renderingActive, let pinch = fieldInput.moved(locations(of: touches)) else { return }
-        if unlockMotion != nil {
-            pinchStart = .overview
-            pinchStartFactor = pinch.factor
-            return
-        }
-        if pinch.began {
-            overviewMotion = nil
-            pinchStart = fieldZoom
-            pinchStartFactor = pinch.factor
-        }
-        applyZoom(pinchStart.magnified(by: pinch.factor / pinchStartFactor, highestOwned: displayedHighest))
+        guard renderingActive, !isShopPresented, let gesture = fieldInput.moved(locations(of: touches)) else { return }
+        cameraMotion = nil
+        pileCamera.gesture(from: gesture.previousCenter, to: gesture.center, factor: gesture.incrementalFactor)
+        projectWorld()
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let time = event?.timestamp ?? touches.first?.timestamp else { return }
-        let count = fieldInput.ended(locations(of: touches), at: time)
-        registerTaps(count)
+        registerTaps(fieldInput.ended(locations(of: touches), at: time))
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -257,283 +244,224 @@ final class GameScene: SKScene {
         Dictionary(uniqueKeysWithValues: touches.map { (ObjectIdentifier($0), $0.location(in: self)) })
     }
 
-    private func applyZoom(_ zoom: FieldZoom) {
-        guard zoom != fieldZoom else { return }
-        fieldZoom = zoom
-        layOutRunners()
-    }
-
-    private func updateOverview(delta: TimeInterval) {
-        guard var motion = overviewMotion else { return }
-        motion.elapsed += delta
-        let progress = min(1, CGFloat(motion.elapsed / 0.50))
-        let eased = progress * progress * (3 - 2 * progress)
-        applyZoom(motion.from.interpolatedToOverview(progress: eased))
-        overviewMotion = progress == 1 ? nil : motion
-    }
-
-    private func updateUnlock(delta: TimeInterval) {
-        guard var motion = unlockMotion else { return }
-        let previous = motion
-        motion.elapsed += delta
-        if motion.arrivalProgress == 1 {
-            fieldZoom = .overview
-            unlockMotion = nil
-        } else {
-            unlockMotion = motion
+    private func animateCamera(to target: PileCamera, duration: TimeInterval) {
+        if UIAccessibility.isReduceMotionEnabled {
+            pileCamera = target
+            cameraMotion = nil
+            projectWorld()
+        } else if pileCamera != target {
+            cameraMotion = CameraMotion(from: pileCamera, to: target, duration: duration)
         }
-        guard motion.pullbackProgress != previous.pullbackProgress ||
-                motion.relocationProgress != previous.relocationProgress ||
-                motion.arrivalProgress != previous.arrivalProgress else { return }
-        layOutRunners()
+    }
+
+    private func updateCamera(delta: TimeInterval) {
+        guard var transition = cameraMotion else { return }
+        transition.elapsed += delta
+        let progress = min(1, CGFloat(transition.elapsed / transition.duration))
+        let eased = progress * progress * (3 - 2 * progress)
+        pileCamera = transition.from.interpolated(to: transition.to, progress: eased)
+        cameraMotion = progress == 1 ? nil : transition
     }
 
     private func synchronizeInventory() {
         guard !isShopPresented else { return }
-        applyInventory(model.counts.prefix(model.highestOwned + 1))
-    }
-
-    private func applyInventory(_ counts: ArraySlice<Int>) {
-        guard !counts.isEmpty, displayedCounts != counts else { return }
-        let highest = counts.count - 1
-        let wasInitialized = !displayedCounts.isEmpty
-
+        let counts = Array(model.counts.prefix(model.highestOwned + 1))
+        guard counts != displayedCounts else { return }
+        let initial = displayedCounts.isEmpty
+        var additions: [Arrival] = []
         for index in counts.indices {
             let animal = model.species[index]
             if index >= species.count {
-                let income = animal.income
-                species.append(SpeciesDisplay(
-                    index: index,
-                    regular: popupAppearance(index: index, amount: income),
-                    doubled: popupAppearance(index: index, amount: income * 2)
-                ))
+                species.append(SpeciesDisplay(index: index,
+                    regular: popupAppearance(index: index, amount: animal.income),
+                    doubled: popupAppearance(index: index, amount: animal.income * 2)))
             }
             let display = species[index]
             for slot in display.members.count..<counts[index] {
                 display.members.append(RunnerDisplay(artIndex: animal.artIndex, slot: slot))
+                additions.append(Arrival(species: index, slot: slot))
             }
         }
-
-        if wasInitialized && highest > displayedHighest {
-            overviewMotion = nil
-            if UIAccessibility.isReduceMotionEnabled {
-                fieldZoom = .overview
-            } else {
-                unlockMotion = UnlockMotion(from: displayedHighest, startScale: fieldZoom.scale,
-                                            endScale: FieldCamera.pullbackScale(from: displayedHighest, to: highest))
-            }
-        }
-        displayedHighest = highest
         displayedCounts = counts
-
-        layOutRunners()
+        let oldBounds = world.bounds
+        expandForInventory()
+        if initial {
+            if !restoreLayout() {
+                if counts.reduce(0, +) == 1 {
+                    pending = additions
+                    arrivalDelay = 0
+                    arrivalElapsed = 0.2
+                } else {
+                    for arrival in additions.sorted(by: { wheelSizes[$0.species] > wheelSizes[$1.species] }) {
+                        add(arrival, settled: true)
+                    }
+                }
+            }
+            pileCamera.updateWorldBounds(world.bounds, preserveView: false)
+        } else {
+            if pending.isEmpty { arrivalElapsed = 0.14 }
+            pending.append(contentsOf: additions)
+            pileCamera.updateWorldBounds(world.bounds)
+            if world.bounds != oldBounds {
+                var target = pileCamera
+                target.reset()
+                animateCamera(to: target, duration: 1.15)
+                arrivalDelay = UIAccessibility.isReduceMotionEnabled ? 0 : 0.95
+            }
+        }
+        layoutDirty = true
+        projectWorld()
     }
 
-    private func popupAppearance(index: Int, amount: Yen) -> PopupAppearance {
-        let texture = art.moneyTexture(index: index, amount: amount)
-        let size = texture.size()
-        return PopupAppearance(texture: texture, width: Self.popupHeight * size.width / max(1, size.height))
+    private func expandForInventory() {
+        let aspect: CGFloat = 240 / 400
+        var area: CGFloat = 0
+        var largest: CGFloat = 0
+        for index in displayedCounts.indices {
+            let diameter = wheelSizes[index]
+            largest = max(largest, diameter)
+            area += CGFloat(displayedCounts[index]) * .pi * diameter * diameter / 4
+        }
+        let required = max(240, largest * 3.4, sqrt(area * aspect / 0.36))
+        // Leave headroom. One tiny purchase in a crowded late-game box must not
+        // cause a new pullback for a fractional change in its occupied area.
+        guard required > world.bounds.width * 1.01 else { return }
+        let width = max(required * 1.12, world.bounds.width * 1.18)
+        world.expand(to: CGRect(x: -width, y: 0, width: width, height: width / aspect))
+    }
+
+    private func add(_ arrival: Arrival, settled: Bool) {
+        let radius = wheelSizes[arrival.species] / 2
+        let id: Int
+        if settled {
+            id = world.addSettled(species: arrival.species, slot: arrival.slot, radius: radius)
+        } else {
+            let visible = pileCamera.visibleWorldBounds.intersection(world.bounds)
+            let start = CGPoint(x: visible.maxX - radius * 1.08,
+                                y: visible.maxY - radius * 1.08)
+            id = world.add(species: arrival.species, slot: arrival.slot, radius: radius,
+                           at: start, launchSize: visible.size)
+        }
+        let runner = species[arrival.species].members[arrival.slot]
+        runner.worldID = id
+        runnerByID[id] = runner
+    }
+
+    private func updateArrivals(delta: TimeInterval) {
+        guard !pending.isEmpty else { return }
+        if arrivalDelay > 0 { arrivalDelay = max(0, arrivalDelay - delta); return }
+        arrivalElapsed += delta
+        if arrivalElapsed >= 0.14 {
+            arrivalElapsed = 0
+            add(pending.removeFirst(), settled: false)
+            pileCamera.updateWorldBounds(world.bounds)
+            layoutDirty = true
+            projectWorld()
+        }
+    }
+
+    private func saveLayout() {
+        saveElapsed = 0
+        guard layoutDirty, !world.wheels.isEmpty else { return }
+        let save = LayoutSave(artIndices: Array(model.species.prefix(displayedCounts.count)).map(\.artIndex),
+                              snapshot: world.snapshot, pending: pending)
+        if let data = try? JSONEncoder().encode(save) { model.savePileLayout(data) }
+        layoutDirty = false
+    }
+
+    private func restoreLayout() -> Bool {
+        guard let data = model.loadPileLayout(), let save = try? JSONDecoder().decode(LayoutSave.self, from: data),
+              save.artIndices.count <= displayedCounts.count,
+              save.artIndices == model.species.prefix(save.artIndices.count).map(\.artIndex),
+              save.snapshot.wheels.count + save.pending.count <= displayedCounts.reduce(0, +),
+              save.pending.allSatisfy({ displayedCounts.indices.contains($0.species) && $0.slot >= 0 && $0.slot < displayedCounts[$0.species] }),
+              save.snapshot.wheels.allSatisfy({
+                  displayedCounts.indices.contains($0.species) && $0.slot >= 0 &&
+                  $0.slot < displayedCounts[$0.species] &&
+                  abs($0.radius * 2 - Double(wheelSizes[$0.species])) < 0.001
+              }) else { return false }
+        let allMembers = save.snapshot.wheels.map { "\($0.species):\($0.slot)" } + save.pending.map { "\($0.species):\($0.slot)" }
+        guard Set(allMembers).count == allMembers.count, world.restore(save.snapshot) else { return false }
+        expandForInventory()
+        pending = save.pending
+        let recorded = Set(allMembers)
+        for index in displayedCounts.indices {
+            for slot in 0..<displayedCounts[index] where !recorded.contains("\(index):\(slot)") {
+                pending.append(Arrival(species: index, slot: slot))
+            }
+        }
+        for wheel in world.wheels {
+            let runner = species[wheel.species].members[wheel.slot]
+            runner.worldID = wheel.id
+            runnerByID[wheel.id] = runner
+        }
+        return true
     }
 
     private var pixelSize: CGFloat { 1 / max(1, view?.contentScaleFactor ?? 2) }
 
-    private func layOutRunners() {
-        guard size.width > 1, size.height > 1, !species.isEmpty else { return }
-        let viewport = CGRect(origin: .zero, size: size)
-        let origin = CGPoint(x: size.width, y: 0)
-        let unlock = unlockMotion
-        let slide = unlock?.relocationProgress ?? 1
-        let pixel = pixelSize
-        func layout(for index: Int, scale: CGFloat) -> StaircaseLayout {
-            StaircaseLayout(bounds: StaircaseLayout.zoomedBounds(viewport: size, scale: scale),
-                            topSpeciesFloat: Double(index), highestOwned: index, pixelSize: pixel)
+    private func projectWorld() {
+        guard size.width > 1, size.height > 1 else { return }
+        if lastCamera != pileCamera {
+            scenery.project(camera: pileCamera)
+            let p = CGMutablePath()
+            let corners = [CGPoint(x: world.bounds.minX, y: world.bounds.minY),
+                           CGPoint(x: world.bounds.maxX, y: world.bounds.minY),
+                           CGPoint(x: world.bounds.maxX, y: world.bounds.maxY),
+                           CGPoint(x: world.bounds.minX, y: world.bounds.maxY)]
+            let points = corners.map { pileCamera.screenPoint(fromWorld: $0) }
+            p.move(to: points[0])
+            for index in points.indices {
+                let start = points[index]
+                let end = points[(index + 1) % points.count]
+                p.addLine(to: CGPoint(x: start.x * 0.54 + end.x * 0.46 + (index.isMultiple(of: 2) ? 0 : 1.4),
+                                      y: start.y * 0.54 + end.y * 0.46 + (index.isMultiple(of: 2) ? 1.2 : 0)))
+                p.addLine(to: end)
+            }
+            p.closeSubpath()
+            boxOutline.path = p
+            lastCamera = pileCamera
         }
-        let previous = unlock.flatMap {
-            slide < 1 ? layout(for: $0.from, scale: $0.cameraScale) : nil
-        }
-        let destination = slide > 0 ? layout(for: displayedHighest, scale: unlock == nil ? fieldZoom.scale : 1) : nil
-        let corner = (destination ?? previous)?.partition.dot ?? .zero
-        let dot = CGPoint(x: min(size.width - pixel / 2, origin.x + corner.x),
-                          y: max(pixel / 2, origin.y - corner.y))
-        layOutBackdrop()
-        layoutRevision += 1
-        collapsedDot.size = CGSize(width: pixel, height: pixel)
-        collapsedDot.position = dot
-        collapsedDot.isHidden = true
         animatedRunners.removeAll(keepingCapacity: true)
-        guideCount = 0
-
-        for display in species {
-            let index = display.index
-            let arrival = unlock.flatMap { index > $0.from ? $0.arrivalProgress : nil }
-            if arrival == 0 {
-                for runner in display.members {
-                    runner.popupOrigin = CGPoint(x: min(25, size.width / 2), y: max(0, size.height - 8))
-                    runner.node.removeFromParent()
-                }
-                continue
-            }
-
-            if (previous?.isCollapsed(index) ?? true) && (destination?.isCollapsed(index) ?? true) {
-                collapsedDot.isHidden = false
-                for runner in display.members {
-                    runner.popupOrigin = dot
-                    runner.node.removeFromParent()
-                }
-                continue
-            }
-
-            for slot in 0..<GameModel.maximumOwnedPerSpecies {
-                let start = previous?.cell(for: index, slot: slot)
-                let end = destination?.cell(for: index, slot: slot)
-                let cornerCell: CGRect
-                if let start, let end {
-                    cornerCell = StaircaseLayout.blend(from: start, to: end, progress: slide)
-                } else if let available = start ?? end {
-                    cornerCell = available
-                } else {
-                    continue
-                }
-                let cell = cornerCell.offsetBy(dx: origin.x, dy: size.height - origin.y)
-                if slot < display.members.count {
-                    let runner = display.members[slot]
-                    if viewport.intersects(cell) {
-                        position(runner, in: cell)
-                        let opacity = arrival ?? 1
-                        runner.node.alpha = opacity
-                        runner.node.setScale(0.92 + 0.08 * opacity)
-                    } else {
-                        runner.node.removeFromParent()
-                        runner.popupOrigin = scenePoint(CGPoint(x: cell.midX, y: cell.midY))
-                    }
-                } else if viewport.intersects(cell), min(cell.width, cell.height) >= 27 {
-                    showGuide(in: cell)
-                }
-            }
-        }
-
-        if guideCount < guideNodes.count {
-            for index in guideCount..<guideNodes.count {
-                guideNodes[index].isHidden = true
-            }
-        }
-    }
-
-    private func position(_ runner: RunnerDisplay, in cell: CGRect) {
-        let center = scenePoint(CGPoint(x: cell.midX, y: cell.midY))
-        let diameter = StaircaseLayout.wheelDiameter(in: cell)
-        let usesDot = StaircaseLayout.usesPixelDot(in: cell, pixelSize: pixelSize)
-        runner.node.position = !usesDot ? center : CGPoint(
-            x: min(size.width - pixelSize / 2, max(pixelSize / 2, center.x)),
-            y: min(size.height - pixelSize / 2, max(pixelSize / 2, center.y))
-        )
-        if runner.node.parent == nil { runners.addChild(runner.node) }
-        if usesDot {
-            let dot = runner.prepareDot()
-            dot.size = CGSize(width: pixelSize, height: pixelSize)
-            runner.popupOrigin = runner.node.position
-            return
-        }
-
-        let pair = runner.prepareArt(
-            wheel: art.wheelTexture(),
-            animal: art.animalTexture(index: runner.artIndex),
-            stand: fieldArt.stand
-        )
-        pair.wheel.size = CGSize(width: diameter, height: diameter)
-        pair.animal.size = CGSize(width: diameter * 0.54, height: diameter * 0.54)
-        pair.stand.size = CGSize(width: diameter * 0.77, height: diameter * 0.38)
-        pair.stand.position = CGPoint(x: 0, y: -diameter * 0.34)
-        runner.diameter = diameter
-        pair.animal.position = CGPoint(x: diameter * 0.04, y: -diameter * 0.13)
-        if motion == .sleeping {
-            runner.setPose(.sleeping, using: art)
-            pair.animal.position.y = -diameter * 0.15
-            pair.animal.zRotation = 0
-        } else if runner.pose == nil {
-            runner.setPose(.awake, using: art)
-        }
-        runner.popupOrigin = CGPoint(x: center.x + diameter * 0.31, y: center.y + diameter * 0.14)
-        animatedRunners.append(runner)
-    }
-
-    private func scenePoint(_ topLeftPoint: CGPoint) -> CGPoint {
-        CGPoint(x: topLeftPoint.x, y: size.height - topLeftPoint.y)
-    }
-
-    private var backdropDepth: Double {
-        if let motion = unlockMotion {
-            if motion.pullbackProgress == 1 { return Double(displayedHighest) / 2 }
-            return FieldCamera.worldDepth(owned: motion.from, zoomScale: motion.cameraScale)
-        }
-        return FieldCamera.worldDepth(owned: displayedHighest, zoomScale: fieldZoom.scale)
-    }
-
-    private func layOutBackdrop() {
-        let depth = backdropDepth
-        guard paintedDepth != depth || paintedSize != size else { return }
-        paintedDepth = depth
-        paintedSize = size
-        canvasPaper.project(viewport: size, worldDepth: depth)
-        guard fieldArt.customBackground == nil else { return }
         let viewport = CGRect(origin: .zero, size: size)
-        layOutCanvasDetails(in: viewport, depth: depth)
-        for (index, mark) in fieldCanvas.marks.enumerated() {
-            let frame = mark.frame(in: size, at: depth)
-            guard frame.intersects(viewport), max(frame.width, frame.height) >= pixelSize else {
-                backdropMarks[mark.motif]?.isHidden = true
+        for wheel in world.wheels {
+            guard let runner = runnerByID[wheel.id] else { continue }
+            let center = pileCamera.screenPoint(fromWorld: wheel.position)
+            let diameter = wheel.radius * 2 * pileCamera.scale
+            runner.popupOrigin = CGPoint(x: center.x + diameter * 0.31, y: center.y + diameter * 0.14)
+            let frame = CGRect(x: center.x - diameter / 2, y: center.y - diameter / 2, width: diameter, height: diameter)
+            guard viewport.intersects(frame) else { runner.node.removeFromParent(); continue }
+            if runner.node.parent == nil { runners.addChild(runner.node) }
+            runner.node.position = center
+            runner.diameter = diameter
+            runner.rollAngle = wheel.angle
+            if diameter <= pixelSize {
+                let dot = runner.prepareDot()
+                dot.size = CGSize(width: pixelSize, height: pixelSize)
                 continue
             }
-            let node: SKSpriteNode
-            if let existing = backdropMarks[mark.motif] {
-                node = existing
-            } else {
-                node = SKSpriteNode(texture: fieldArt.texture(for: mark.motif))
-                node.zPosition = CGFloat(index + 1) * 0.01
-                backdrop.addChild(node)
-                backdropMarks[mark.motif] = node
-            }
-            node.position = CGPoint(x: frame.midX, y: frame.midY)
-            node.size = frame.size
-            node.isHidden = false
+            let parts = runner.prepareArt(wheel: art.wheelTexture(),
+                animal: art.animalTexture(index: runner.artIndex))
+            parts.wheel.size = CGSize(width: diameter, height: diameter)
+            parts.wheel.zRotation = runner.rollAngle + runner.spinAngle
+            parts.animal.size = CGSize(width: diameter * 0.54, height: diameter * 0.54)
+            parts.animal.position = CGPoint(x: diameter * 0.04, y: -diameter * 0.15)
+            parts.animal.isHidden = diameter < 9
+            if runner.pose == nil || motion == .sleeping { runner.setPose(.sleeping, using: art) }
+            if diameter >= 9 { animatedRunners.append(runner) }
         }
+        // A queued purchase already contributes income, so keep one popup origin
+        // per owned animal even while it waits at the upper-right chute.
+        for arrival in pending {
+            species[arrival.species].members[arrival.slot].popupOrigin = CGPoint(x: size.width - 12, y: size.height - 12)
+        }
+        layoutRevision &+= 1
     }
 
-    private func layOutCanvasDetails(in viewport: CGRect, depth: Double) {
-        var visible: [Int: SKSpriteNode] = [:]
-        for detail in fieldCanvas.details {
-            let frame = detail.frame(in: viewport.size, at: depth)
-            let extent = max(frame.width, frame.height)
-            guard extent > 5, frame.intersects(viewport) else { continue }
-            let node: SKSpriteNode
-            if let existing = backdropDetails.removeValue(forKey: detail.id) {
-                node = existing
-            } else {
-                node = SKSpriteNode(texture: fieldArt.texture(for: detail))
-                node.zPosition = CGFloat(detail.id) / 1_000_000
-                canvasDetails.addChild(node)
-            }
-            node.position = CGPoint(x: frame.midX, y: frame.midY)
-            node.size = frame.size
-            node.alpha = min(1, (extent - 5) / 6)
-            visible[detail.id] = node
-        }
-        for node in backdropDetails.values { node.removeFromParent() }
-        backdropDetails = visible
-    }
-
-    private func showGuide(in cell: CGRect) {
-        if guideCount == guideNodes.count {
-            let node = SKSpriteNode(texture: fieldArt.slot)
-            guides.addChild(node)
-            guideNodes.append(node)
-        }
-        let node = guideNodes[guideCount]
-        guideCount += 1
-        let side = min(cell.width, cell.height) * 0.84
-        node.size = CGSize(width: side, height: side)
-        node.position = scenePoint(CGPoint(x: cell.midX, y: cell.midY))
-        node.isHidden = false
+    private func popupAppearance(index: Int, amount: Yen) -> PopupAppearance {
+        let texture = art.moneyTexture(index: index, amount: amount)
+        let textureSize = texture.size()
+        return PopupAppearance(texture: texture, width: Self.popupHeight * textureSize.width / max(1, textureSize.height))
     }
 
     private func updateRunners(delta: TimeInterval) {
@@ -567,8 +495,9 @@ final class GameScene: SKScene {
         for runner in animatedRunners {
             guard let parts = runner.art else { continue }
             if turn > 0 {
-                parts.wheel.zRotation = (parts.wheel.zRotation - turn).truncatingRemainder(dividingBy: 2 * .pi)
+                runner.spinAngle = (runner.spinAngle - turn).truncatingRemainder(dividingBy: 2 * .pi)
             }
+            parts.wheel.zRotation = runner.rollAngle + runner.spinAngle
             let phase = (runPhase + CGFloat(runner.slot) * 0.57)
                 .truncatingRemainder(dividingBy: 2 * .pi)
             let size = runner.diameter
@@ -701,7 +630,7 @@ final class GameScene: SKScene {
     #if DEBUG
     private func updateStress(delta: TimeInterval) {
         guard let period = stressTapPeriod, delta > 0 else { return }
-        stressTapTime += delta
+        stressTapTime += min(delta, 0.1)
         stressReportTime += delta
         stressFrames += 1
         while stressTapTime >= period {
@@ -718,27 +647,6 @@ final class GameScene: SKScene {
         }
     }
     #endif
-}
-
-private struct UnlockMotion {
-    let from: Int
-    let startScale: CGFloat
-    let endScale: CGFloat
-    var elapsed: TimeInterval = 0
-
-    var pullbackProgress: CGFloat { progress(after: 0.20, duration: 0.95) }
-    var relocationProgress: CGFloat { progress(after: 1.53, duration: 1.12) }
-    var arrivalProgress: CGFloat { progress(after: 2.65, duration: 0.62) }
-
-    var cameraScale: CGFloat {
-        let pullback = pullbackProgress
-        return pow(startScale, 1 - pullback) * pow(endScale, pullback)
-    }
-
-    private func progress(after start: TimeInterval, duration: TimeInterval) -> CGFloat {
-        let progress = min(1, max(0, CGFloat((elapsed - start) / duration)))
-        return progress * progress * (3 - 2 * progress)
-    }
 }
 
 private enum RunnerMotion {
@@ -790,7 +698,6 @@ private final class RunnerDisplay {
     struct Art {
         let wheel: SKSpriteNode
         let animal: SKSpriteNode
-        let stand: SKSpriteNode
     }
 
     let artIndex: Int
@@ -798,6 +705,9 @@ private final class RunnerDisplay {
     let node = SKNode()
     var art: Art?
     var diameter: CGFloat = 0
+    var worldID = -1
+    var rollAngle: CGFloat = 0
+    var spinAngle: CGFloat = 0
     var popupOrigin = CGPoint.zero
     private(set) var pose: AnimalPose?
     private var dot: SKSpriteNode?
@@ -830,21 +740,19 @@ private final class RunnerDisplay {
         return sprite
     }
 
-    func prepareArt(wheel: SKTexture, animal: SKTexture, stand: SKTexture) -> Art {
+    func prepareArt(wheel: SKTexture, animal: SKTexture) -> Art {
         dot?.removeFromParent()
         let currentArt: Art
         if let art {
             currentArt = art
         } else {
             currentArt = Art(wheel: SKSpriteNode(texture: wheel),
-                             animal: SKSpriteNode(texture: animal),
-                             stand: SKSpriteNode(texture: stand))
+                             animal: SKSpriteNode(texture: animal))
             currentArt.wheel.zPosition = 1
             currentArt.animal.zPosition = 2
             art = currentArt
         }
         if currentArt.wheel.parent == nil {
-            node.addChild(currentArt.stand)
             node.addChild(currentArt.wheel)
             node.addChild(currentArt.animal)
         }

@@ -6,17 +6,40 @@ import UIKit
 final class CanvasPaper {
     let node: SKSpriteNode
     private let cameraDepth = SKUniform(name: "u_worldDepth", float: 0)
+    private let pileMode = SKUniform(name: "u_pileMode", float: 0)
+    private let worldOriginX = SKUniform(name: "u_worldOriginX", float: 0)
+    private let worldOriginY = SKUniform(name: "u_worldOriginY", float: 0)
+    private let worldExtentX = SKUniform(name: "u_worldExtentX", float: 1)
+    private let worldExtentY = SKUniform(name: "u_worldExtentY", float: 1)
+    private let depthStretch = SKUniform(name: "u_depthStretch", float: 1)
 
     init(texture: SKTexture? = nil) {
         node = SKSpriteNode(texture: texture ?? Self.whiteTexel())
         node.anchorPoint = .zero
-        node.shader = SKShader(source: texture == nil ? Self.paint : Self.picture, uniforms: [cameraDepth])
+        node.shader = SKShader(source: texture == nil ? Self.paint : Self.picture,
+                               uniforms: [cameraDepth, pileMode, worldOriginX, worldOriginY,
+                                          worldExtentX, worldExtentY, depthStretch])
     }
 
     func project(viewport: CGSize, worldDepth: Double) {
+        if pileMode.floatValue != 0 { pileMode.floatValue = 0 }
         if node.size != viewport { node.size = viewport }
         let depth = Float(worldDepth)
         if cameraDepth.floatValue != depth { cameraDepth.floatValue = depth }
+    }
+
+    /// Sample one fixed painted world under a freely moving pile camera.
+    /// The original artwork uses 99.5 octaves; `depthStretch` compresses those
+    /// coordinates to the finite physical size range of the new wheels.
+    func projectPile(camera: PileCamera, referenceSize: CGSize, depthStretch stretch: Double) {
+        pileMode.floatValue = 1
+        if node.size != camera.viewport { node.size = camera.viewport }
+        let bounds = camera.visibleWorldBounds
+        worldOriginX.floatValue = Float(-bounds.minX / referenceSize.width)
+        worldOriginY.floatValue = Float(bounds.minY / referenceSize.height)
+        worldExtentX.floatValue = Float(bounds.width / referenceSize.width)
+        worldExtentY.floatValue = Float(bounds.height / referenceSize.height)
+        depthStretch.floatValue = Float(max(0.001, stretch))
     }
 
     private static func whiteTexel() -> SKTexture {
@@ -35,7 +58,20 @@ final class CanvasPaper {
     void main() {
         float visible = exp2(min(u_worldDepth - 99.5, 0.0));
         vec2 point = vec2(1.0 - (1.0 - v_tex_coord.x) * visible, v_tex_coord.y * visible);
-        gl_FragColor = texture2D(u_texture, point) * v_color_mix.a;
+        bool outsidePaper = false;
+        if (u_pileMode > 0.5) {
+            vec2 world = vec2(u_worldOriginX - v_tex_coord.x * u_worldExtentX,
+                              u_worldOriginY + v_tex_coord.y * u_worldExtentY);
+            float extent = exp2(99.5 * u_depthStretch);
+            point = vec2(1.0 - world.x / extent, world.y / extent);
+            // The camera's overview apron can look below the world's floor
+            // or beyond its right wall. Texture clamping would stretch the
+            // last painted row/column across that whole apron.
+            outsidePaper = point.x < 0.0 || point.x > 1.0 || point.y < 0.0 || point.y > 1.0;
+        }
+        vec4 color = texture2D(u_texture, point);
+        if (outsidePaper) { color = vec4(1.0, 0.978, 0.923, 1.0); }
+        gl_FragColor = color * v_color_mix.a;
     }
     """
 
@@ -83,9 +119,23 @@ final class CanvasPaper {
     void main() {
         // Recover world coordinates without passing a 2^99-sized transform to the GPU.
         vec2 distanceFromCorner = vec2(1.0 - v_tex_coord.x, v_tex_coord.y);
+        bool outsidePaper = false;
+        if (u_pileMode > 0.5) {
+            vec2 world = vec2(u_worldOriginX - v_tex_coord.x * u_worldExtentX,
+                              u_worldOriginY + v_tex_coord.y * u_worldExtentY);
+            // Keep the padding outside the physical world as notebook paper.
+            // Clamping a negative coordinate to zero instead samples the same
+            // painted edge repeatedly and creates long vertical/horizontal bars.
+            outsidePaper = world.x < 0.0 || world.y < 0.0;
+            distanceFromCorner = max(world, vec2(0.000001));
+        }
         float radius = max(length(distanceFromCorner), 0.000001);
         float worldRadius = u_worldDepth + log2(radius);
         float worldHeight = u_worldDepth + log2(max(distanceFromCorner.y, 0.000001));
+        if (u_pileMode > 0.5) {
+            worldRadius = log2(radius) / u_depthStretch;
+            worldHeight = log2(max(distanceFromCorner.y, 0.000001)) / u_depthStretch;
+        }
         float angle = distanceFromCorner.y
                       / max(distanceFromCorner.x + distanceFromCorner.y, 0.000001);
         float ripple = sin(worldRadius * 1.35 + angle * 16.0);
@@ -99,6 +149,11 @@ final class CanvasPaper {
         float field = sin(worldRadius * 3.1 + angle * 19.0 + 1.7 * ripple);
         grass = mix(grass, vec3(0.61, 0.69, 0.40), smoothstep(0.17, 0.73, field) * 0.29);
         vec2 yard = min(distanceFromCorner * exp2(u_worldDepth), vec2(8.0));
+        if (u_pileMode > 0.5) {
+            // Clamp the logarithm before exponentiating: the original world
+            // spans 2^99, while the indoor boards need only the first 8 units.
+            yard = exp2(min(log2(max(distanceFromCorner, vec2(0.000001))) / u_depthStretch, vec2(3.0)));
+        }
         float pathCenter = 0.15 + 0.50 * yard.y + 0.065 * sin(yard.y * 10.0);
         float pathEdge = abs(yard.x - pathCenter) + 0.018 * ripple;
         float path = (1.0 - smoothstep(0.075, 0.12, pathEdge)) * (1.0 - smoothstep(0.53, 0.68, yard.y));
@@ -160,6 +215,9 @@ final class CanvasPaper {
         float octave = floor(worldRadius);
         float fine = smoothstep(0.57, 1.0, fract(worldRadius));
         vec2 pigmentPoint = distanceFromCorner * exp2(u_worldDepth - octave);
+        if (u_pileMode > 0.5) {
+            pigmentPoint = distanceFromCorner / radius * exp2(worldRadius - octave);
+        }
         float wax = mix(hatch(pigmentPoint, octave), hatch(pigmentPoint * 0.5, octave + 1.0), fine);
         float smudge = mix(rubbing(pigmentPoint, octave), rubbing(pigmentPoint * 0.5, octave + 1.0), fine);
         color += vec3(wax * 0.14 + smudge * 0.21 + ripple * 0.013);
@@ -168,6 +226,7 @@ final class CanvasPaper {
             color = mix(color, vec3(0.96, 0.90, 0.70), spark * darkSky * 0.82);
         }
 
+        if (outsidePaper) { color = vec3(1.0, 0.978, 0.923); }
         gl_FragColor = vec4(color, 1.0) * v_color_mix.a;
     }
     """

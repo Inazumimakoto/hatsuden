@@ -22,7 +22,6 @@ enum BoostKind: String, CaseIterable, Identifiable {
 @MainActor
 @Observable
 final class GameModel {
-    nonisolated static let maximumOwnedPerSpecies = 8
     nonisolated static let ignitionLevel = 0.70
     nonisolated static let boostDuration: TimeInterval = 5 * 60
     nonisolated static let secondsPerOfflinePulse = 120
@@ -33,6 +32,7 @@ final class GameModel {
     private static let tapWindow = 0.40
     private static let saveInterval = 8.0
     private static let saveKey = "hatsuden.save.v3"
+    private static let pileLayoutKey = "hatsuden.pile.v1"
     private static let previousSaveKey = "hatsuden.save.v2"
     private static let legacySaveKey = "hatsuden.save.v1"
     private static let millisecondsPerSecond = 1_000
@@ -53,7 +53,12 @@ final class GameModel {
     var isLit: Bool { isReceivingTaps && meter >= Self.ignitionLevel }
     var isTapBoostActive: Bool { boostRemaining(.tap) > 0 }
     var isBackgroundBoostActive: Bool { boostRemaining(.background) > 0 }
-    var totalAnimals: Int { counts.reduce(0, +) }
+    var totalAnimals: Int {
+        counts.reduce(0) { total, count in
+            let (sum, overflow) = total.addingReportingOverflow(count)
+            return overflow ? Int.max : sum
+        }
+    }
 
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored private let now: () -> Date
@@ -74,7 +79,7 @@ final class GameModel {
         var highestOwned = 0
         if let save {
             for (index, count) in save.counts.prefix(counts.count).enumerated() {
-                let owned = min(max(count, index == 0 ? 1 : 0), Self.maximumOwnedPerSpecies)
+                let owned = max(count, index == 0 ? 1 : 0)
                 guard owned > 0 else { break }
                 counts[index] = owned
                 highestOwned = index
@@ -105,12 +110,23 @@ final class GameModel {
     }
 
     #if DEBUG
+    static func pileDemoFixture() -> GameModel {
+        let suite = UserDefaults(suiteName: "hatsuden.debug.pile-demo")!
+        suite.removeObject(forKey: "hatsuden.pile.v1")
+        let owned = 38
+        let counts = (0..<catalog.count).map { $0 < owned ? 2 + ($0 * 7) % 11 : 0 }
+        let save = Save(balance: catalog[owned - 1].cost * 20, counts: counts, savedAt: Date(),
+                        ownedArtIndices: catalog.map(\.artIndex))
+        suite.set(try! JSONEncoder().encode(save), forKey: saveKey)
+        return GameModel(defaults: suite)
+    }
+
     static func stressFixture() -> GameModel {
         let suite = UserDefaults(suiteName: "hatsuden.debug.stress")!
         let date = Date()
         let save = Save(
             balance: 0,
-            counts: Array(repeating: maximumOwnedPerSpecies, count: catalog.count),
+            counts: Array(repeating: 8, count: catalog.count),
             savedAt: date,
             ownedArtIndices: catalog.map(\.artIndex)
         )
@@ -155,14 +171,16 @@ final class GameModel {
         let animal = species[index]
         let owned = counts[index]
         guard owned > 0 else { return animal.cost }
-        // Additional animals cost a few dozen pulses at this stage and repay
-        // the investment before the more expensive next adoption.
-        let factor = index == 0 ? 12 + 6 * owned : 22 + 10 * owned
-        return animal.income * UInt64(factor)
+        // Keep the existing early-game prices, then let extra wheels keep
+        // getting more expensive without an ownership cap or Int overflow.
+        let base: UInt64 = index == 0 ? 12 : 22
+        let step: UInt64 = index == 0 ? 6 : 10
+        return animal.income * UInt64(owned) * step + animal.income * base
     }
 
     func canAfford(_ index: Int) -> Bool {
-        isUnlocked(index) && counts[index] < Self.maximumOwnedPerSpecies && balance >= price(for: index)
+        guard counts.indices.contains(index), isUnlocked(index), counts[index] < Int.max else { return false }
+        return balance >= price(for: index)
     }
 
     @discardableResult
@@ -201,6 +219,14 @@ final class GameModel {
 
     func dismissOfflineEarnings() {
         offlineEarnings = nil
+    }
+
+    func loadPileLayout() -> Data? {
+        defaults.data(forKey: Self.pileLayoutKey)
+    }
+
+    func savePileLayout(_ data: Data) {
+        defaults.set(data, forKey: Self.pileLayoutKey)
     }
 
     func setActive(_ isActive: Bool) {
@@ -347,8 +373,8 @@ final class GameModel {
 private func makeAnimalCatalog(names: [String]) -> [AnimalSpecies] {
     var income: Yen = 1
     return names.enumerated().map { index, name in
-        // One new animal earns 9× one animal of the previous species,
-        // 12.5% above the previous species' full group of eight.
+        // Each newly unlocked species earns nine times one prior-species
+        // animal. Extra wheels remain available at every earlier stage.
         let previousIncome = income
         if index > 0 { income = income * 9 }
         let priceFactor: UInt64

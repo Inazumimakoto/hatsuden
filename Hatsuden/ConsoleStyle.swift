@@ -159,7 +159,7 @@ extension View {
 }
 
 enum SketchSymbol: String {
-    case bulbOff = "bulb_off", bulbOn = "bulb_on", shop, zoom, tap, close, lock, moon
+    case bulbOff = "bulb_off", bulbOn = "bulb_on", shop, zoom, shake, tap, close, lock, moon
 
     var key: String { "ui_" + rawValue }
 }
@@ -267,6 +267,18 @@ struct SketchIcon: View {
             line([(8, 9), (20, 20)], ConsoleInk.blue, 3.2)
             line([(29, 40), (41, 41), (40, 29)], ConsoleInk.blue, 3.7)
             line([(39, 39), (28, 28)], ConsoleInk.blue, 3.2)
+        case .shake:
+            // A crooked box with loose wheels and a wobble on each side.
+            let box = poly([(11, 14), (34, 10), (39, 35), (15, 39)])
+            fill(box, ConsoleInk.gold.opacity(0.60))
+            let firstWheel = Path(ellipseIn: CGRect(x: 17, y: 20, width: 9, height: 10))
+            let secondWheel = Path(ellipseIn: CGRect(x: 27, y: 25, width: 8, height: 8))
+            fill(firstWheel, ConsoleInk.lightPaper)
+            fill(secondWheel, ConsoleInk.lightPaper)
+            line([(20, 23), (23, 27)], ConsoleInk.orange, 1.4)
+            line([(30, 27), (32, 30)], ConsoleInk.orange, 1.4)
+            line([(5, 12), (2, 20), (7, 26), (4, 34)], ConsoleInk.blue, 2.5)
+            line([(42, 12), (46, 19), (42, 26), (46, 34)], ConsoleInk.blue, 2.5)
         case .tap:
             let hand = Path { path in
                 path.move(to: CGPoint(x: 17, y: 39))

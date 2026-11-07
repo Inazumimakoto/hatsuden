@@ -44,6 +44,12 @@ final class PlaySession {
 
     init() {
 #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--pile-demo") {
+            let model = GameModel.pileDemoFixture()
+            self.model = model
+            scene = GameScene(model: model)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--stress-particles") {
             let model = GameModel.stressFixture()
             self.model = model

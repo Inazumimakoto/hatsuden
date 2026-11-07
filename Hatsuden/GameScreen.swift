@@ -103,6 +103,17 @@ struct GameScreen: View {
             .buttonStyle(.plain)
             .accessibilityLabel("全景に戻す")
             .accessibilityIdentifier("zoom-reset")
+
+            Button(action: session.scene.shake) {
+                SketchIcon(symbol: .shake, size: 30)
+                    .frame(width: 51, height: 51)
+                    .paperCard(ConsoleInk.gold.opacity(0.40), line: ConsoleInk.rust)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("発電箱を揺らす")
+            .accessibilityHint("続けて押すと車輪が混ざります")
+            .accessibilityIdentifier("field-shake")
         }
     }
 }

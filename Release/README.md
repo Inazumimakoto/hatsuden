@@ -1,5 +1,7 @@
 # 発電どうぶつ 1.0（4）の公開素材
 
+**このフォルダーは、階段状に車輪を配置していた旧ビルド4の公開準備記録です。現在は、車輪の投入・自由なズーム・揺らして混ぜる方式へ変更中です。ここにある掲載文とスクリーンショットは新方式に合わせて更新・再撮影し、検証した新しいアーカイブを用意してから提出します。**
+
 今回の背景修正を含む初回公開用の素材です。価格は無料、広告あり。連絡先は `inazumimakoto@gmail.com` です。43件のテストとiOS Releaseビルドを確認し、`1.0 (4)` の署名付きアーカイブを作成しました。[App Store Connectのアプリ](https://appstoreconnect.apple.com/apps/6831870090/distribution)も登録済みです。掲載情報の入力、ビルドのアップロード、審査提出は残りの作業です。
 
 [Xcodeアーカイブ](</Users/inazumimakoto/Library/Developer/Xcode/Archives/2026-11-07/Hatsuden 1.0 (4).xcarchive>) はチーム `V7XG8HDQL4` の開発署名です。App Store Connect向けの配布時にXcodeで検証し、適切な配布署名でアップロードします。

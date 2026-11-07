@@ -23,7 +23,8 @@ final class AppOpenAds: NSObject, FullScreenContentDelegate {
         unitID = AdPlacement.appOpen.unitID
         #if DEBUG
         isShowingLaunchCover = unitID != nil &&
-            !ProcessInfo.processInfo.arguments.contains("--stress-particles")
+            !ProcessInfo.processInfo.arguments.contains("--stress-particles") &&
+            !ProcessInfo.processInfo.arguments.contains("--pile-demo")
         #else
         isShowingLaunchCover = unitID != nil &&
             UserDefaults.standard.integer(forKey: Self.launchCountKey) >= Self.launchesBeforeAds
