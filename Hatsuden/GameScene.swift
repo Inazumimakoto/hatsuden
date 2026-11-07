@@ -6,8 +6,15 @@ final class GameScene: SKScene {
     private let model: GameModel
     private let art = ArtProvider.shared
     private let fieldArt = FieldArtwork()
+    private let fieldCanvas = FieldCanvas()
     private let field = SKNode()
-    private let backdrop = SKSpriteNode()
+    private let backdrop = SKNode()
+    private lazy var canvasPaper = CanvasPaper(texture: fieldArt.customBackground)
+    private let canvasDetails = SKNode()
+    private var backdropDetails: [Int: SKSpriteNode] = [:]
+    private var backdropMarks: [FieldMotif: SKSpriteNode] = [:]
+    private var paintedDepth: Double?
+    private var paintedSize = CGSize.zero
     private let guides = SKNode()
     private let runners = SKNode()
     private let popups = SKNode()
@@ -16,7 +23,7 @@ final class GameScene: SKScene {
     private var guideCount = 0
     private var species: [SpeciesDisplay] = []
     private var animatedRunners: [RunnerDisplay] = []
-    private var displayedCounts: [Int] = []
+    private var displayedCounts: ArraySlice<Int> = []
     private var displayedHighest = 0
 
     private var wavePool: [MoneyWave] = []
@@ -28,7 +35,6 @@ final class GameScene: SKScene {
     private static let wakeDuration: TimeInterval = 0.16
     private static let runDelay: TimeInterval = 0.40
 
-    private var layoutTopSpecies: Double
     private var unlockMotion: UnlockMotion?
     private var fieldZoom = FieldZoom.overview
     private var overviewMotion: (from: FieldZoom, elapsed: TimeInterval)?
@@ -37,6 +43,7 @@ final class GameScene: SKScene {
     private var fieldInput = FieldTouchInput<ObjectIdentifier>()
     private var previousTime: TimeInterval?
     private var renderingActive = true
+    private var isShopPresented = false
     private var runPhase: CGFloat = 0
     private var activityElapsed = 0.0
     private var motion = RunnerMotion.sleeping
@@ -50,16 +57,35 @@ final class GameScene: SKScene {
     private var lastWaveSize = 0
     var debugActiveWaveSizes: [Int] { waves.map { $0.sprites.count } }
     var debugLastWaveFirstTexture: SKTexture? { waves.last?.sprites.first?.texture }
+    var debugBackdropDepth: Double { backdropDepth }
+    var debugBackdropMarks: [FieldMotif: CGRect] {
+        backdropMarks.filter { !$0.value.isHidden }.mapValues(\.frame)
+    }
+    var debugCanvasDetails: [Int: CGRect] { backdropDetails.mapValues(\.frame) }
+    var debugBackdropFrame: CGRect {
+        let scale = unlockMotion?.cameraScale ?? fieldZoom.scale
+        return CGRect(x: size.width - size.width * scale, y: 0,
+                      width: size.width * scale, height: size.height * scale)
+    }
+    func debugRunnerFrame(species index: Int, slot: Int) -> CGRect? {
+        guard species.indices.contains(index), species[index].members.indices.contains(slot) else { return nil }
+        let runner = species[index].members[slot]
+        guard runner.node.parent != nil, let wheel = runner.art?.wheel, wheel.parent != nil else { return nil }
+        let diameter = wheel.size.width * runner.node.xScale
+        return CGRect(x: runner.node.position.x - diameter / 2, y: runner.node.position.y - diameter / 2,
+                      width: diameter, height: diameter)
+    }
     var debugStarterWheelWidths: [CGFloat] {
-        species.first?.members.compactMap { runner in
-            guard runner.node.parent != nil, let wheel = runner.art?.wheel, wheel.parent != nil else { return nil }
-            return wheel.size.width
-        } ?? []
+        (0..<GameModel.maximumOwnedPerSpecies).compactMap { debugRunnerFrame(species: 0, slot: $0)?.width }
     }
 
     func debugZoomToStarter() {
+        debugSetZoom(factor: 1_000)
+    }
+
+    func debugSetZoom(factor: CGFloat) {
         synchronizeInventory()
-        applyZoom(FieldZoom.overview.magnified(by: 1_000, highestOwned: displayedHighest))
+        applyZoom(FieldZoom.overview.magnified(by: factor, highestOwned: displayedHighest))
     }
 
     var debugHamstersAtCutoff: Int {
@@ -77,12 +103,10 @@ final class GameScene: SKScene {
 
     init(model: GameModel) {
         self.model = model
-        layoutTopSpecies = Double(model.highestOwned)
         super.init(size: CGSize(width: 1, height: 1))
 
         backgroundColor = FieldInk.paper
         backdrop.zPosition = 0
-        backdrop.anchorPoint = .zero
         guides.zPosition = 1
         runners.zPosition = 3
         popups.zPosition = 7
@@ -90,6 +114,9 @@ final class GameScene: SKScene {
         collapsedDot.isHidden = true
         addChild(field)
         field.addChild(backdrop)
+        backdrop.addChild(canvasPaper.node)
+        canvasDetails.zPosition = 0.005
+        backdrop.addChild(canvasDetails)
         field.addChild(guides)
         field.addChild(runners)
         addChild(popups)
@@ -140,8 +167,30 @@ final class GameScene: SKScene {
         registerTaps(1)
     }
 
+    func setShopPresented(_ presented: Bool) {
+        guard isShopPresented != presented else { return }
+        isShopPresented = presented
+        fieldInput.reset()
+        if presented, unlockMotion != nil {
+            fieldZoom = .overview
+            unlockMotion = nil
+            layOutRunners()
+        }
+        if !presented {
+            previousTime = nil
+            synchronizeInventory()
+        }
+    }
+
+    func synchronizeShopAdditions() {
+        guard isShopPresented else { return }
+        // Update the ranks already on the field before the cover begins to close.
+        // New ranks wait for the reveal once the cover has fully disappeared.
+        applyInventory(model.counts.prefix(displayedCounts.count))
+    }
+
     private func registerTaps(_ count: Int) {
-        guard renderingActive, count > 0 else { return }
+        guard renderingActive, !isShopPresented, count > 0 else { return }
         synchronizeInventory()
         for _ in 0..<count {
             for _ in 0..<model.tap() {
@@ -151,7 +200,7 @@ final class GameScene: SKScene {
     }
 
     func resetZoom() {
-        guard fieldZoom != .overview else { return }
+        guard unlockMotion == nil, fieldZoom != .overview else { return }
         overviewMotion = (from: fieldZoom, elapsed: 0)
     }
 
@@ -161,8 +210,10 @@ final class GameScene: SKScene {
         previousTime = currentTime
 
         synchronizeInventory()
-        updateUnlock(delta: delta)
-        updateOverview(delta: delta)
+        if !isShopPresented {
+            updateUnlock(delta: delta)
+            updateOverview(delta: delta)
+        }
         model.update(delta: delta)
         updateRunners(delta: min(delta, 0.05))
         updateMoney(delta: delta)
@@ -179,6 +230,11 @@ final class GameScene: SKScene {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard renderingActive, let pinch = fieldInput.moved(locations(of: touches)) else { return }
+        if unlockMotion != nil {
+            pinchStart = .overview
+            pinchStartFactor = pinch.factor
+            return
+        }
         if pinch.began {
             overviewMotion = nil
             pinchStart = fieldZoom
@@ -218,21 +274,31 @@ final class GameScene: SKScene {
 
     private func updateUnlock(delta: TimeInterval) {
         guard var motion = unlockMotion else { return }
+        let previous = motion
         motion.elapsed += delta
-        let progress = min(1, motion.elapsed / 0.60)
-        let eased = progress * progress * (3 - 2 * progress)
-        layoutTopSpecies = progress == 1 ? motion.to : motion.from + (motion.to - motion.from) * eased
-        unlockMotion = progress == 1 ? nil : motion
+        if motion.arrivalProgress == 1 {
+            fieldZoom = .overview
+            unlockMotion = nil
+        } else {
+            unlockMotion = motion
+        }
+        guard motion.pullbackProgress != previous.pullbackProgress ||
+                motion.relocationProgress != previous.relocationProgress ||
+                motion.arrivalProgress != previous.arrivalProgress else { return }
         layOutRunners()
     }
 
     private func synchronizeInventory() {
-        let counts = model.counts
-        guard displayedCounts != counts else { return }
-        let highest = model.highestOwned
+        guard !isShopPresented else { return }
+        applyInventory(model.counts.prefix(model.highestOwned + 1))
+    }
+
+    private func applyInventory(_ counts: ArraySlice<Int>) {
+        guard !counts.isEmpty, displayedCounts != counts else { return }
+        let highest = counts.count - 1
         let wasInitialized = !displayedCounts.isEmpty
 
-        for index in 0...highest {
+        for index in counts.indices {
             let animal = model.species[index]
             if index >= species.count {
                 let income = animal.income
@@ -249,8 +315,13 @@ final class GameScene: SKScene {
         }
 
         if wasInitialized && highest > displayedHighest {
-            unlockMotion = UnlockMotion(from: layoutTopSpecies, to: Double(highest))
-            resetZoom()
+            overviewMotion = nil
+            if UIAccessibility.isReduceMotionEnabled {
+                fieldZoom = .overview
+            } else {
+                unlockMotion = UnlockMotion(from: displayedHighest, startScale: fieldZoom.scale,
+                                            endScale: FieldCamera.pullbackScale(from: displayedHighest, to: highest))
+            }
         }
         displayedHighest = highest
         displayedCounts = counts
@@ -269,16 +340,24 @@ final class GameScene: SKScene {
     private func layOutRunners() {
         guard size.width > 1, size.height > 1, !species.isEmpty else { return }
         let viewport = CGRect(origin: .zero, size: size)
-        let layout = StaircaseLayout(
-            bounds: StaircaseLayout.zoomedBounds(viewport: size, scale: fieldZoom.scale),
-            topSpeciesFloat: layoutTopSpecies,
-            highestOwned: displayedHighest,
-            pixelSize: pixelSize
-        )
-        let dot = CGPoint(x: size.width + layout.partition.dot.x, y: -layout.partition.dot.y)
+        let origin = CGPoint(x: size.width, y: 0)
+        let unlock = unlockMotion
+        let slide = unlock?.relocationProgress ?? 1
+        let pixel = pixelSize
+        func layout(for index: Int, scale: CGFloat) -> StaircaseLayout {
+            StaircaseLayout(bounds: StaircaseLayout.zoomedBounds(viewport: size, scale: scale),
+                            topSpeciesFloat: Double(index), highestOwned: index, pixelSize: pixel)
+        }
+        let previous = unlock.flatMap {
+            slide < 1 ? layout(for: $0.from, scale: $0.cameraScale) : nil
+        }
+        let destination = slide > 0 ? layout(for: displayedHighest, scale: unlock == nil ? fieldZoom.scale : 1) : nil
+        let corner = (destination ?? previous)?.partition.dot ?? .zero
+        let dot = CGPoint(x: min(size.width - pixel / 2, origin.x + corner.x),
+                          y: max(pixel / 2, origin.y - corner.y))
         layOutBackdrop()
         layoutRevision += 1
-        collapsedDot.size = CGSize(width: pixelSize, height: pixelSize)
+        collapsedDot.size = CGSize(width: pixel, height: pixel)
         collapsedDot.position = dot
         collapsedDot.isHidden = true
         animatedRunners.removeAll(keepingCapacity: true)
@@ -286,7 +365,16 @@ final class GameScene: SKScene {
 
         for display in species {
             let index = display.index
-            if layout.isCollapsed(index) {
+            let arrival = unlock.flatMap { index > $0.from ? $0.arrivalProgress : nil }
+            if arrival == 0 {
+                for runner in display.members {
+                    runner.popupOrigin = CGPoint(x: min(25, size.width / 2), y: max(0, size.height - 8))
+                    runner.node.removeFromParent()
+                }
+                continue
+            }
+
+            if (previous?.isCollapsed(index) ?? true) && (destination?.isCollapsed(index) ?? true) {
                 collapsedDot.isHidden = false
                 for runner in display.members {
                     runner.popupOrigin = dot
@@ -295,22 +383,25 @@ final class GameScene: SKScene {
                 continue
             }
 
-            // A newly purchased tier waits at the top edge until its tile enters.
-            guard layout.partition.rect(for: index) != nil else {
-                for runner in display.members {
-                    runner.popupOrigin = CGPoint(x: min(25, size.width / 2), y: max(0, size.height - 8))
-                    runner.node.removeFromParent()
-                }
-                continue
-            }
-
             for slot in 0..<GameModel.maximumOwnedPerSpecies {
-                guard let cornerCell = layout.cell(for: index, slot: slot) else { continue }
-                let cell = cornerCell.offsetBy(dx: size.width, dy: size.height)
+                let start = previous?.cell(for: index, slot: slot)
+                let end = destination?.cell(for: index, slot: slot)
+                let cornerCell: CGRect
+                if let start, let end {
+                    cornerCell = StaircaseLayout.blend(from: start, to: end, progress: slide)
+                } else if let available = start ?? end {
+                    cornerCell = available
+                } else {
+                    continue
+                }
+                let cell = cornerCell.offsetBy(dx: origin.x, dy: size.height - origin.y)
                 if slot < display.members.count {
                     let runner = display.members[slot]
                     if viewport.intersects(cell) {
                         position(runner, in: cell)
+                        let opacity = arrival ?? 1
+                        runner.node.alpha = opacity
+                        runner.node.setScale(0.92 + 0.08 * opacity)
                     } else {
                         runner.node.removeFromParent()
                         runner.popupOrigin = scenePoint(CGPoint(x: cell.midX, y: cell.midY))
@@ -370,19 +461,65 @@ final class GameScene: SKScene {
         CGPoint(x: topLeftPoint.x, y: size.height - topLeftPoint.y)
     }
 
+    private var backdropDepth: Double {
+        if let motion = unlockMotion {
+            if motion.pullbackProgress == 1 { return Double(displayedHighest) / 2 }
+            return FieldCamera.worldDepth(owned: motion.from, zoomScale: motion.cameraScale)
+        }
+        return FieldCamera.worldDepth(owned: displayedHighest, zoomScale: fieldZoom.scale)
+    }
+
     private func layOutBackdrop() {
-        let texture = fieldArt.background
-        if backdrop.texture == nil { backdrop.texture = texture }
-        let frame = FieldCamera.artworkFrame(
-            in: CGRect(origin: .zero, size: size),
-            topSpecies: layoutTopSpecies,
-            lastSpecies: GameModel.catalog.count - 1
-        )
-        // Beyond the last texel, retain the corner instead of sending enormous quads to SpriteKit.
-        let textureSize = texture.size()
-        let magnification = min(fieldZoom.scale, max(textureSize.width, textureSize.height))
-        backdrop.size = CGSize(width: frame.width * magnification, height: frame.height * magnification)
-        backdrop.position = CGPoint(x: size.width - backdrop.size.width, y: frame.minY)
+        let depth = backdropDepth
+        guard paintedDepth != depth || paintedSize != size else { return }
+        paintedDepth = depth
+        paintedSize = size
+        canvasPaper.project(viewport: size, worldDepth: depth)
+        guard fieldArt.customBackground == nil else { return }
+        let viewport = CGRect(origin: .zero, size: size)
+        layOutCanvasDetails(in: viewport, depth: depth)
+        for (index, mark) in fieldCanvas.marks.enumerated() {
+            let frame = mark.frame(in: size, at: depth)
+            guard frame.intersects(viewport), max(frame.width, frame.height) >= pixelSize else {
+                backdropMarks[mark.motif]?.isHidden = true
+                continue
+            }
+            let node: SKSpriteNode
+            if let existing = backdropMarks[mark.motif] {
+                node = existing
+            } else {
+                node = SKSpriteNode(texture: fieldArt.texture(for: mark.motif))
+                node.zPosition = CGFloat(index + 1) * 0.01
+                backdrop.addChild(node)
+                backdropMarks[mark.motif] = node
+            }
+            node.position = CGPoint(x: frame.midX, y: frame.midY)
+            node.size = frame.size
+            node.isHidden = false
+        }
+    }
+
+    private func layOutCanvasDetails(in viewport: CGRect, depth: Double) {
+        var visible: [Int: SKSpriteNode] = [:]
+        for detail in fieldCanvas.details {
+            let frame = detail.frame(in: viewport.size, at: depth)
+            let extent = max(frame.width, frame.height)
+            guard extent > 5, frame.intersects(viewport) else { continue }
+            let node: SKSpriteNode
+            if let existing = backdropDetails.removeValue(forKey: detail.id) {
+                node = existing
+            } else {
+                node = SKSpriteNode(texture: fieldArt.texture(for: detail))
+                node.zPosition = CGFloat(detail.id) / 1_000_000
+                canvasDetails.addChild(node)
+            }
+            node.position = CGPoint(x: frame.midX, y: frame.midY)
+            node.size = frame.size
+            node.alpha = min(1, (extent - 5) / 6)
+            visible[detail.id] = node
+        }
+        for node in backdropDetails.values { node.removeFromParent() }
+        backdropDetails = visible
     }
 
     private func showGuide(in cell: CGRect) {
@@ -584,9 +721,24 @@ final class GameScene: SKScene {
 }
 
 private struct UnlockMotion {
-    let from: Double
-    let to: Double
+    let from: Int
+    let startScale: CGFloat
+    let endScale: CGFloat
     var elapsed: TimeInterval = 0
+
+    var pullbackProgress: CGFloat { progress(after: 0.20, duration: 0.95) }
+    var relocationProgress: CGFloat { progress(after: 1.53, duration: 1.12) }
+    var arrivalProgress: CGFloat { progress(after: 2.65, duration: 0.62) }
+
+    var cameraScale: CGFloat {
+        let pullback = pullbackProgress
+        return pow(startScale, 1 - pullback) * pow(endScale, pullback)
+    }
+
+    private func progress(after start: TimeInterval, duration: TimeInterval) -> CGFloat {
+        let progress = min(1, max(0, CGFloat((elapsed - start) / duration)))
+        return progress * progress * (3 - 2 * progress)
+    }
 }
 
 private enum RunnerMotion {

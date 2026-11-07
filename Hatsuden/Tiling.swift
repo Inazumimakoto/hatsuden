@@ -114,7 +114,7 @@ struct StaircaseLayout {
         return Self.blend(from: tall, to: wide, progress: entering ? 1 - easing : easing)
     }
 
-    private static func blend(from origin: CGRect, to destination: CGRect, progress: CGFloat) -> CGRect {
+    static func blend(from origin: CGRect, to destination: CGRect, progress: CGFloat) -> CGRect {
         CGRect(
             x: origin.minX + (destination.minX - origin.minX) * progress,
             y: origin.minY + (destination.minY - origin.minY) * progress,
@@ -171,19 +171,18 @@ struct StaircaseLayout {
     }
 }
 
-/// A single picture is magnified around its lower-right corner in scene coordinates.
+/// Every two staircase cuts are one octave. The canvas and the wheels
+/// share this camera, including its fixed lower-right origin.
 enum FieldCamera {
-    static func artworkFrame(in viewport: CGRect, topSpecies: Double, lastSpecies: Int) -> CGRect {
-        guard lastSpecies > 0 else { return viewport }
-        let progress = min(1, max(0, topSpecies / Double(lastSpecies)))
-        guard progress < 1 else { return viewport }
+    static func worldDepth(owned: Int, zoomScale: CGFloat) -> Double {
+        Double(owned) / 2 - log2(Double(zoomScale))
+    }
 
-        // Spend more of the visible camera movement on the early unlocks,
-        // but keep revealing a little more of the picture through the final tier.
-        let reveal = log1p(9 * progress) / log(10)
-        let scale = CGFloat(pow(12, 1 - reveal))
-        let width = viewport.width * scale
-        let height = viewport.height * scale
-        return CGRect(x: viewport.maxX - width, y: viewport.minY, width: width, height: height)
+    static func pullbackScale(from: Int, to: Int) -> CGFloat {
+        magnification(of: Double(from) / 2, at: Double(to) / 2)
+    }
+
+    static func magnification(of depth: Double, at worldDepth: Double) -> CGFloat {
+        CGFloat(exp2(depth - worldDepth))
     }
 }

@@ -1,3 +1,5 @@
+import Foundation
+
 enum AnimalCatalog {
     /// Game estimates for adult size in centimetres. Fictional species use set sizes.
     static let names = previousSequence.sorted {
@@ -8,6 +10,25 @@ enum AnimalCatalog {
     static let previousNames = previousSequence.map(\.name)
     static let legacyNames = previousSequence.sorted { $0.originalID < $1.originalID }.map(\.name)
     static let sizeByName = Dictionary(uniqueKeysWithValues: previousSequence.map { ($0.name, $0.size) })
+
+    static func sizeLabel(for name: String) -> String? {
+        guard let centimetres = sizeByName[name] else { return nil }
+
+        let value: Double
+        let unit: String
+        switch centimetres {
+        case 100_000...:
+            value = centimetres / 100_000
+            unit = "km"
+        case 100...:
+            value = centimetres / 100
+            unit = "m"
+        default:
+            value = centimetres
+            unit = "cm"
+        }
+        return "\(value.formatted(.number.precision(.fractionLength(0...2)))) \(unit)"
+    }
 
     /// Artwork keys use the original zero-based index, even when unlock order changes.
     static let artIndexByName = Dictionary(uniqueKeysWithValues: previousSequence.map { ($0.name, $0.originalID - 1) })

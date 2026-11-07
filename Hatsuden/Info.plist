@@ -8,6 +8,8 @@
 	<string>発電どうぶつ</string>
 	<key>GADApplicationIdentifier</key>
 	<string>ca-app-pub-9336495538487468~9607535810</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>HatsudenTapRewardAdUnit</key>
 	<string>ca-app-pub-9336495538487468/9407391117</string>
 	<key>HatsudenBackgroundRewardAdUnit</key>

@@ -21,8 +21,8 @@ struct GameScreen: View {
         }
         .foregroundStyle(ConsoleInk.ink)
         .accessibilityHidden(shopOpen)
-        .fullScreenCover(isPresented: $shopOpen, onDismiss: { showingGameBanner = true }) {
-            ShopView(model: model, offlineCredit: $offlineCredit)
+        .fullScreenCover(isPresented: $shopOpen, onDismiss: closeShop) {
+            ShopView(model: model, offlineCredit: $offlineCredit, onPurchase: session.scene.synchronizeShopAdditions)
         }
         .task(id: scenePhase) {
             if scenePhase == .active { await AdsPrivacy.shared.refreshIfConfigured() }
@@ -72,8 +72,14 @@ struct GameScreen: View {
     }
 
     private func openShop() {
+        session.scene.setShopPresented(true)
         showingGameBanner = false
         shopOpen = true
+    }
+
+    private func closeShop() {
+        showingGameBanner = true
+        session.scene.setShopPresented(false)
     }
 
     private var topBar: some View {

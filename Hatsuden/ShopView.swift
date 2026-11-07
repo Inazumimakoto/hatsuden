@@ -3,6 +3,7 @@ import SwiftUI
 struct ShopView: View {
     let model: GameModel
     @Binding var offlineCredit: OfflineCredit?
+    let onPurchase: () -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var ads = RewardAds()
     @State private var showingAdPrivacy = false
@@ -21,13 +22,13 @@ struct ShopView: View {
                 LazyVStack(alignment: .leading, spacing: 9) {
                     if let nextIndex {
                         sectionTitle("次のどうぶつ", code: "NEW ARRIVAL")
-                        ShopRow(species: model.species[nextIndex], model: model, isNew: true)
+                        ShopRow(species: model.species[nextIndex], model: model, onPurchase: onPurchase, isNew: true)
                     }
 
                     sectionTitle("仲間を増やす", code: "YOUR CREW")
                         .padding(.top, nextIndex == nil ? 0 : 7)
                     ForEach(model.species[0...model.highestOwned].reversed()) { species in
-                        ShopRow(species: species, model: model)
+                        ShopRow(species: species, model: model, onPurchase: onPurchase)
                     }
 
                     if let nextIndex, nextIndex + 1 < model.species.count {
@@ -46,6 +47,13 @@ struct ShopView: View {
                 .padding(.bottom, 20)
             }
             .scrollIndicators(.hidden)
+            HStack(spacing: 20) {
+                Link("プライバシーポリシー", destination: URL(string: "https://hatsuden-animals.netlify.app/privacy.html")!)
+                Link("お問い合わせ", destination: URL(string: "https://hatsuden-animals.netlify.app/support.html")!)
+            }
+            .font(ConsoleInk.letter(11))
+            .foregroundStyle(ConsoleInk.blue)
+            .frame(maxWidth: .infinity, minHeight: 44)
             BannerAdFooter(surface: .shop, isVisible: !showingAdPrivacy && ads.pending == nil)
         }
         .background { NotebookPaper(asset: "ui_shop_paper", ruled: true).ignoresSafeArea() }
@@ -230,7 +238,8 @@ struct ShopView: View {
     }
 
     private func lockedRow(_ species: AnimalSpecies) -> some View {
-        HStack(spacing: 9) {
+        let size = AnimalCatalog.sizeLabel(for: species.name)
+        return HStack(spacing: 9) {
             Image(uiImage: ArtProvider.shared.silhouetteImage(index: species.artIndex))
                 .renderingMode(.template)
                 .resizable()
@@ -240,6 +249,11 @@ struct ShopView: View {
                 .accessibilityHidden(true)
             Text("???").font(ConsoleInk.pencil(16))
             Spacer(minLength: 0)
+            if let size {
+                Text("約\(size)")
+                    .font(ConsoleInk.letter(10))
+                    .foregroundStyle(ConsoleInk.muted)
+            }
             SketchIcon(symbol: .lock, size: 16)
         }
         .padding(.horizontal, 10)
@@ -247,12 +261,14 @@ struct ShopView: View {
         .paperCard(ConsoleInk.edge.opacity(0.08), line: ConsoleInk.edge.opacity(0.55))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("未解放のどうぶつ")
+        .accessibilityValue(size.map { "大きさ、約\($0)" } ?? "")
     }
 }
 
 private struct ShopRow: View {
     let species: AnimalSpecies
     let model: GameModel
+    let onPurchase: () -> Void
     var isNew = false
     @State private var purchaseToken = 0
 
@@ -279,6 +295,11 @@ private struct ShopRow: View {
                 Text(species.name)
                     .font(ConsoleInk.letter(14))
                     .lineLimit(2)
+                if let size = AnimalCatalog.sizeLabel(for: species.name) {
+                    Text("大きさ 約\(size)")
+                        .font(ConsoleInk.letter(10))
+                        .foregroundStyle(ConsoleInk.muted)
+                }
                 Text("1回 +¥\(Currency.compact(species.income))")
                     .font(ConsoleInk.letter(10))
                     .foregroundStyle(ConsoleInk.muted)
@@ -322,7 +343,10 @@ private struct ShopRow: View {
                 .accessibilityLabel("最大数に到達")
         } else {
             Button {
-                if model.purchase(species.index) { purchaseToken += 1 }
+                if model.purchase(species.index) {
+                    onPurchase()
+                    purchaseToken += 1
+                }
             } label: {
                 VStack(spacing: 2) {
                     Text(isNew ? "迎える" : "追加する")

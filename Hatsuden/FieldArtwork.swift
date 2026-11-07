@@ -13,24 +13,100 @@ enum FieldInk {
 
 @MainActor
 final class FieldArtwork {
-    private static let backgroundTexture: SKTexture = {
-        guard let artwork = UIImage(named: "field_background") else { return texture(from: drawBackground()) }
+    private static let customArtwork = UIImage(named: "field_background").map {
+        texture(from: resizeBackground($0))
+    }
+    private static var motifs: [FieldMotif: SKTexture] = [:]
+    private static let sceneryDetails: NSCache<NSNumber, SKTexture> = {
+        let cache = NSCache<NSNumber, SKTexture>()
+        cache.totalCostLimit = 16 * 1_024 * 1_024
+        return cache
+    }()
+
+    var customBackground: SKTexture? { Self.customArtwork }
+
+    func texture(for detail: FieldCanvas.Detail) -> SKTexture {
+        let key = NSNumber(value: detail.id)
+        if let cached = Self.sceneryDetails.object(forKey: key) { return cached }
+        let size = CGSize(width: 320, height: 240)
+        let image = Self.renderer(size: size).image { painter in
+            let context = painter.cgContext
+            switch detail.artist {
+            case .room: CanvasRoomDetails.draw(detail.subject, in: context)
+            case .earth: CanvasEarthDetails.draw(detail.subject, in: context)
+            case .sky: CanvasSkyDetails.draw(detail.subject, in: context)
+            case .extra: CanvasExtraDetails.draw(detail.subject, in: context)
+            }
+        }
+        let texture = Self.texture(from: image)
+        Self.sceneryDetails.setObject(texture, forKey: key, cost: 320 * 240 * 4 * 4 / 3)
+        return texture
+    }
+
+    func texture(for motif: FieldMotif) -> SKTexture {
+        if let cached = Self.motifs[motif] { return cached }
+        let crop = Self.bounds(for: motif)
+        let scale = min(2, 512 / max(crop.width, crop.height))
+        let size = CGSize(width: ceil(crop.width * scale), height: ceil(crop.height * scale))
+        let image = Self.renderer(size: size).image { painter in
+            let context = painter.cgContext
+            context.scaleBy(x: scale, y: scale)
+            context.translateBy(x: -crop.minX, y: -crop.minY)
+            switch motif {
+            case .hive, .gardenFence, .flowerPatch:
+                GardenBackdrop.draw(motif, in: context)
+            case .railway, .neighborhood:
+                NeighborhoodBackdrop.draw(motif, in: context)
+            case .comet, .nebula, .icePlanet:
+                SpaceBackdrop.draw(motif, in: context)
+            case .creek, .windmill, .foothill, .sailboat, .cloudBank, .satellite:
+                CanvasDetails.draw(motif, in: context)
+            default:
+                BackdropPainter(context: context).draw(motif)
+            }
+        }
+        let texture = Self.texture(from: image)
+        Self.motifs[motif] = texture
+        return texture
+    }
+
+    private static func bounds(for motif: FieldMotif) -> CGRect {
+        switch motif {
+        case .hive: CGRect(x: 302, y: 728, width: 345, height: 355)
+        case .hamsterHouse: CGRect(x: 925, y: 1_888, width: 81, height: 81)
+        case .gardenFence: CGRect(x: -30, y: 515, width: 1_075, height: 240)
+        case .flowerPatch: CGRect(x: 6, y: 810, width: 1_025, height: 1_190)
+        case .railway: CGRect(x: -44, y: 952, width: 1_094, height: 375)
+        case .neighborhood: CGRect(x: -27, y: 624, width: 1_069, height: 334)
+        case .tokyo: CGRect(x: 430, y: 1_039, width: 610, height: 811)
+        case .fuji: CGRect(x: 153, y: 704, width: 587, height: 493)
+        case .liberty: CGRect(x: -69, y: 592, width: 441, height: 539)
+        case .rocket: CGRect(x: 350, y: 139, width: 181, height: 193)
+        case .moon: CGRect(x: 600, y: 241, width: 85, height: 86)
+        case .mars: CGRect(x: 670, y: 58, width: 224, height: 222)
+        case .ringedPlanet: CGRect(x: 19, y: 48, width: 250, height: 169)
+        case .comet: CGRect(x: 254, y: 1_356, width: 467, height: 393)
+        case .nebula: CGRect(x: -75, y: 360, width: 1_190, height: 940)
+        case .icePlanet: CGRect(x: 726, y: 1_560, width: 260, height: 273)
+        case .creek, .windmill, .foothill, .sailboat, .cloudBank, .satellite:
+            CGRect(x: 0, y: 0, width: 512, height: 384)
+        }
+    }
+
+    private static func resizeBackground(_ artwork: UIImage) -> UIImage {
         let largestSide = max(artwork.size.width, artwork.size.height)
-        guard largestSide * artwork.scale > 4_096 else { return texture(from: artwork) }
+        guard largestSide * artwork.scale > 4_096 else { return artwork }
 
         let scale = 4_096 / largestSide
         let size = CGSize(width: max(1, (artwork.size.width * scale).rounded()),
                           height: max(1, (artwork.size.height * scale).rounded()))
         let bounds = CGRect(origin: .zero, size: size)
-        let resized = renderer(size: size, opaque: true).image { painter in
+        return renderer(size: size, opaque: true).image { painter in
             painter.cgContext.setFillColor(FieldInk.paper.cgColor)
             painter.cgContext.fill(bounds)
             artwork.draw(in: bounds)
         }
-        return texture(from: resized)
-    }()
-
-    var background: SKTexture { Self.backgroundTexture }
+    }
 
     lazy var slot: SKTexture = UIImage(named: "field_slot").map(Self.texture(from:))
         ?? Self.texture(from: Self.drawSlot())
@@ -49,17 +125,6 @@ final class FieldArtwork {
         format.opaque = opaque
         format.scale = 1
         return UIGraphicsImageRenderer(size: size, format: format)
-    }
-
-    private static func drawBackground() -> UIImage {
-        let size = CGSize(width: 1_536, height: 3_072)
-        return renderer(size: size, opaque: true).image { painter in
-            let context = painter.cgContext
-            context.setFillColor(FieldInk.paper.cgColor)
-            context.fill(CGRect(origin: .zero, size: size))
-            context.scaleBy(x: 1.536, y: 1.536)
-            BackdropPainter(context: context).draw()
-        }
     }
 
     private static func drawSlot() -> UIImage {
@@ -154,37 +219,21 @@ private final class BackdropPainter {
 
     init(context: CGContext) { wax = WaxCrayon(context: context) }
 
-    func draw() {
-        let arc: [P] = [(-55, 634), (65, 567), (173, 499), (308, 439), (449, 380),
-                        (618, 352), (779, 345), (906, 367), (1_055, 411)]
-        outerSpace(above: arc)
-        valley(below: arc)
-        fuji()
-        city()
-        hamsterRoom()
-        wax.paperGrain()
+    func draw(_ motif: FieldMotif) {
+        switch motif {
+        case .hamsterHouse: hamsterRoom()
+        case .tokyo: city()
+        case .fuji: fuji()
+        case .liberty: libertyHarbor()
+        case .rocket: rocket()
+        case .moon: crescent()
+        case .mars: mars()
+        case .ringedPlanet: ringedPlanet()
+        default: break
+        }
     }
 
-    private func outerSpace(above arc: [P]) {
-        wax.fill([(-60, -50), (1_055, -55)] + arc.reversed(), color: night, opacity: 0.88)
-        wax.stroke(arc, color: lake, width: 20, opacity: 0.68)
-        wax.stroke(arc.map { ($0.0 - 2, $0.1 + 15) }, color: skyBlue, width: 12, opacity: 0.70)
-
-        for i in 0..<39 {
-            let x = 19 + random.next() * 953
-            let y = 26 + random.next() * 258
-            let r = 3 + random.next() * (i % 5 == 0 ? 19 : 9)
-            let color = i % 3 == 0 ? honey : white
-            wax.stroke([(x - r * 0.86, y + r * 0.53), (x + r, y - r * 0.43)],
-                       color: color, width: 1.9 + r * 0.18, opacity: 0.86)
-            wax.stroke([(x - r * 0.34, y - r), (x + r * 0.19, y + r * 0.8)],
-                       color: color, width: 1.7 + r * 0.14, opacity: 0.76)
-            if i.isMultiple(of: 4) {
-                wax.stroke([(x - r * 0.63, y - r * 0.39), (x + r * 0.73, y + r * 0.52)],
-                           color: color, width: 2, opacity: 0.67)
-            }
-        }
-
+    private func ringedPlanet() {
         // A tall, lumpy planet and its crooked ring.
         wax.shape([(87, 110), (113, 75), (168, 66), (199, 96), (210, 135),
                    (177, 180), (127, 186), (91, 158)], color: honey, border: FieldInk.orange,
@@ -195,10 +244,37 @@ private final class BackdropPainter {
                     (244, 126), (221, 114), (201, 121)], color: lilac, width: 12.5, opacity: 0.96)
         wax.stroke([(43, 168), (63, 182), (120, 178), (189, 157), (228, 130)],
                    color: white, width: 3.8, opacity: 0.66)
+    }
 
-        wax.shape([(741, 191), (759, 162), (787, 165), (810, 199), (799, 224),
-                   (775, 230), (748, 219)], color: red, border: honey, width: 6.7, opacity: 0.85)
+    private func mars() {
+        // Mars is the first big planet to come into view near the edge of the sheet.
+        let rust = UIColor(red: 0.64, green: 0.24, blue: 0.24, alpha: 1)
+        wax.shape([(692, 143), (713, 107), (755, 82), (810, 90), (849, 116),
+                   (869, 163), (857, 211), (828, 245), (779, 255), (736, 233),
+                   (704, 205)], color: FieldInk.orange, border: red, width: 10, opacity: 0.98)
+        wax.shape([(704, 161), (719, 145), (743, 150), (753, 176), (789, 181),
+                   (818, 174), (852, 185), (853, 213), (826, 241), (779, 251),
+                   (742, 233), (719, 210)], color: red, border: red, width: 5, opacity: 0.66)
+        wax.stroke([(720, 129), (741, 111), (767, 112), (781, 100)],
+                   color: honey, width: 9.4, opacity: 0.79)
+        wax.stroke([(725, 201), (752, 218), (779, 221), (802, 239)],
+                   color: honey, width: 7.2, opacity: 0.72)
+        wax.stroke([(811, 111), (831, 126), (840, 144)], color: white, width: 6, opacity: 0.49)
+        wax.shape([(775, 140), (789, 131), (804, 134), (811, 146), (799, 155), (782, 155)],
+                  color: rust, border: rust, width: 4.7, opacity: 0.73)
+        wax.shape([(805, 198), (816, 191), (834, 197), (832, 208), (817, 214), (807, 210)],
+                  color: rust, border: rust, width: 4, opacity: 0.70)
+        wax.stroke([(750, 187), (759, 184), (770, 190)], color: rust, width: 5.6, opacity: 0.76)
+    }
 
+    private func crescent() {
+        // A pale crescent just beyond the blue edge of Earth.
+        wax.shape([(648, 254), (629, 258), (615, 276), (615, 293), (629, 309),
+                   (647, 311), (668, 299), (651, 298), (638, 285), (638, 269)],
+                  color: white, border: honey, width: 4.6, opacity: 0.90)
+    }
+
+    private func rocket() {
         // A tiny rocket in a different direction from the planetary arc.
         wax.shape([(416, 261), (431, 207), (474, 166), (508, 155), (493, 195),
                    (467, 235), (442, 265)], color: white, border: skyBlue, width: 5.3, opacity: 0.9)
@@ -212,60 +288,82 @@ private final class BackdropPainter {
                    color: honey, width: 8, opacity: 0.90)
     }
 
-    private func valley(below arc: [P]) {
-        wax.fill(arc + [(1_050, 1_225), (708, 1_159), (361, 1_238), (-60, 1_166)],
-                 color: skyBlue, opacity: 0.20)
+    private func libertyHarbor() {
+        let copper = UIColor(red: 0.34, green: 0.69, blue: 0.56, alpha: 1)
+        let copperShade = UIColor(red: 0.19, green: 0.45, blue: 0.39, alpha: 1)
+        let stone = UIColor(red: 0.76, green: 0.56, blue: 0.42, alpha: 1)
 
-        cloud(x: 198, y: 827, size: 1.3)
-        cloud(x: 788, y: 610, size: 1.4)
-        cloud(x: 810, y: 872, size: 0.9)
-        cloud(x: 90, y: 973, size: 0.7)
+        // The harbor sits to the left of Fuji, outside the earlier crops of the drawing.
+        let water: [P] = [(-48, 1_014), (29, 997), (79, 1_004), (123, 1_011), (185, 997), (236, 1_012),
+                          (304, 1_002), (348, 1_019), (339, 1_054), (269, 1_081),
+                          (184, 1_098), (111, 1_081), (25, 1_097), (-47, 1_110)]
+        wax.shape(water, color: lake, border: skyBlue, width: 7, opacity: 0.61)
+        wax.shape([(121, 1_042), (146, 1_023), (193, 1_014), (248, 1_016), (296, 1_030),
+                   (315, 1_050), (269, 1_065), (190, 1_069), (148, 1_060)],
+                  color: leaf, border: copperShade, width: 5.8, opacity: 0.91)
+        wax.stroke([(72, 1_040), (92, 1_033), (109, 1_036)], color: white, width: 4.5, opacity: 0.74)
+        wax.stroke([(102, 1_072), (126, 1_068), (145, 1_072), (158, 1_068)],
+                   color: white, width: 5, opacity: 0.78)
+        wax.stroke([(228, 1_083), (254, 1_081), (281, 1_071), (300, 1_075)],
+                   color: white, width: 4.7, opacity: 0.77)
 
-        let grass: [P] = [(-55, 1_111), (100, 1_170), (240, 1_131), (369, 1_165), (517, 1_099),
-                          (643, 1_121), (775, 1_143), (919, 1_087), (1_054, 1_169),
-                          (1_050, 2_050), (-60, 2_045)]
-        wax.fill(grass, color: leaf, opacity: 0.34)
-        wax.stroke(Array(grass.prefix(9)), color: leaf, width: 10.8, opacity: 0.63)
+        // A sailboat gives the statue a nearby point of reference for scale.
+        wax.shape([(89, 1_016), (126, 1_019), (119, 1_029), (101, 1_029)],
+                  color: red, border: wood, width: 3.5, opacity: 0.86)
+        wax.shape([(102, 1_010), (115, 984), (122, 1_010)],
+                  color: white, border: skyBlue, width: 3.2, opacity: 0.94)
 
-        let bay: [P] = [(-55, 1_273), (76, 1_221), (205, 1_266), (297, 1_232), (419, 1_291),
-                        (502, 1_375), (449, 1_439), (350, 1_475), (335, 1_533), (352, 1_589),
-                        (275, 1_663), (151, 1_716), (-58, 1_774)]
-        wax.fill(bay, color: lake, opacity: 0.58)
-        wax.stroke(Array(bay.dropFirst()), color: lake, width: 12.4, opacity: 0.60)
-        for _ in 0..<21 {
-            let x = 13 + random.next() * 272
-            let y = 1_290 + random.next() * 320
-            let r = 9 + random.next() * 20
-            wax.stroke([(x - r, y + 4), (x - r / 2, y + 1), (x, y - 3),
-                        (x + r * 0.52, y + 1), (x + r, y - 2)],
-                       color: white, width: 3 + random.next() * 2, opacity: 0.55)
+        wax.shape([(158, 1_036), (164, 1_020), (176, 1_018), (178, 998), (192, 997),
+                   (193, 947), (255, 949), (261, 997), (274, 1_000), (276, 1_020),
+                   (290, 1_027), (291, 1_040), (222, 1_047)],
+                  color: stone, border: wood, width: 6.4, opacity: 0.95)
+        wax.stroke([(174, 1_020), (216, 1_027), (272, 1_021)], color: honey, width: 5, opacity: 0.76)
+        wax.stroke([(201, 992), (221, 996), (254, 991)], color: wood, width: 4.3, opacity: 0.55)
+        wax.stroke([(216, 981), (217, 966), (225, 962), (233, 966), (234, 982)],
+                   color: wood, width: 5, opacity: 0.74)
+
+        // Raised torch arm, then the gown, tablet, face, and seven crown rays.
+        wax.shape([(204, 841), (182, 823), (166, 781), (151, 719), (144, 699), (160, 688),
+                   (171, 705), (181, 741), (202, 778), (221, 798)],
+                  color: copper, border: copperShade, width: 6.3, opacity: 0.98)
+        wax.stroke([(159, 703), (155, 682), (150, 670)], color: copperShade, width: 8, opacity: 0.95)
+        wax.shape([(138, 662), (163, 661), (159, 672), (145, 673)],
+                  color: honey, border: wood, width: 4.5, opacity: 0.95)
+        wax.shape([(144, 660), (135, 650), (142, 637), (140, 625), (153, 632),
+                   (161, 619), (164, 642), (156, 657)],
+                  color: honey, border: FieldInk.orange, width: 5.1, opacity: 0.97)
+
+        wax.shape([(210, 789), (233, 785), (249, 797), (264, 808), (270, 842),
+                   (253, 863), (251, 891), (267, 946), (243, 957), (180, 950),
+                   (192, 909), (198, 881), (193, 851), (197, 814)],
+                  color: copper, border: copperShade, width: 6.4, opacity: 0.98)
+        wax.stroke([(201, 808), (219, 827), (243, 841), (257, 835)],
+                   color: copperShade, width: 6.2, opacity: 0.75)
+        wax.stroke([(202, 839), (216, 860), (210, 896), (199, 931)],
+                   color: white, width: 5.2, opacity: 0.54)
+        wax.stroke([(233, 864), (225, 902), (231, 930), (226, 948)],
+                   color: copperShade, width: 5.4, opacity: 0.72)
+        wax.stroke([(246, 887), (243, 908), (255, 940)], color: white, width: 5.2, opacity: 0.49)
+
+        wax.shape([(244, 817), (270, 804), (284, 850), (254, 862)],
+                  color: copperShade, border: copperShade, width: 5.2, opacity: 0.90)
+        wax.stroke([(260, 842), (271, 835), (278, 839)], color: copper, width: 8.4, opacity: 1)
+
+        wax.shape([(207, 751), (217, 738), (241, 739), (252, 757), (246, 779),
+                   (232, 794), (217, 787), (209, 774)],
+                  color: copper, border: copperShade, width: 5.5, opacity: 0.98)
+        let crownRays: [(P, P)] = [((207, 751), (187, 742)), ((213, 742), (196, 722)),
+                                   ((218, 738), (210, 709)), ((227, 738), (230, 706)),
+                                   ((236, 738), (248, 713)), ((243, 743), (261, 725)),
+                                   ((249, 749), (270, 740))]
+        for (root, tip) in crownRays {
+            wax.stroke([root, tip], color: copperShade, width: 5.2, opacity: 0.94)
         }
-
-        for _ in 0..<53 {
-            let x = 222 + random.next() * 710
-            let y = 1_692 + random.next() * 292
-            let h = 3 + random.next() * 14
-            wax.stroke([(x - h * 0.55, y - h * 0.39), (x, y),
-                        (x - h * 0.09, y - h), (x + h * 0.34, y - h * 0.15),
-                        (x + h * 0.65, y - h * 0.86)],
-                       color: leaf, width: 1.8 + random.next() * 1.9, opacity: 0.49)
-        }
-
-        for (x, y, r): (CGFloat, CGFloat, CGFloat) in [(412, 1_795, 9), (542, 1_860, 11),
-                                                        (352, 1_915, 8), (605, 1_765, 7)] {
-            wax.stroke([(x - 6, y + 20), (x + 2, y + 8), (x, y)], color: leaf, width: 4, opacity: 0.75)
-            wax.shape([(x - r, y + 3), (x - r, y - 5), (x - 2, y - r),
-                       (x + r, y - 2), (x + r * 0.76, y + 8), (x, y + r)],
-                      color: honey, border: red, width: 3.3, opacity: 0.69)
-        }
-    }
-
-    private func cloud(x: CGFloat, y: CGFloat, size: CGFloat) {
-        let p: [P] = [(-50, 4), (-41, -13), (-29, -10), (-20, -29), (-2, -33),
-                      (15, -19), (28, -20), (43, -9), (45, 5), (56, 12), (46, 24),
-                      (20, 21), (1, 25), (-22, 19), (-39, 23), (-54, 14)]
-        wax.shape(p.map { (x + $0.0 * size, y + $0.1 * size) }, color: white,
-                  border: skyBlue, width: 5.7 * size, opacity: 0.60)
+        wax.stroke([(209, 754), (223, 747), (239, 746), (251, 753)],
+                   color: copperShade, width: 7.6, opacity: 0.93)
+        wax.stroke([(218, 764), (221, 763)], color: copperShade, width: 4, opacity: 0.92)
+        wax.stroke([(236, 763), (239, 764)], color: copperShade, width: 4, opacity: 0.92)
+        wax.stroke([(224, 778), (229, 780), (236, 777)], color: copperShade, width: 3.8, opacity: 0.86)
     }
 
     private func fuji() {
@@ -365,39 +463,6 @@ private final class BackdropPainter {
     }
 
     private func hamsterRoom() {
-        let house: [P] = [(850, 1_761), (889, 1_751), (944, 1_743), (1_012, 1_753),
-                          (1_023, 2_026), (842, 2_025), (843, 1_920), (854, 1_838)]
-        wax.shape(house, color: honey, border: wood, width: 7, opacity: 0.74)
-        let roof: [P] = [(822, 1_780), (848, 1_738), (886, 1_699), (908, 1_654),
-                         (925, 1_648), (941, 1_670), (979, 1_714), (1_021, 1_751),
-                         (1_020, 1_771), (966, 1_765), (903, 1_774), (855, 1_773)]
-        wax.shape(roof, color: red, border: wood, width: 8.5, opacity: 0.90)
-        wax.shape([(964, 1_699), (967, 1_648), (988, 1_653), (986, 1_724)],
-                  color: red, border: wood, width: 6.3, opacity: 0.79)
-        wax.stroke([(966, 1_641), (955, 1_628), (968, 1_615), (989, 1_619),
-                    (1_004, 1_604), (990, 1_588)], color: lilac, width: 4.6, opacity: 0.52)
-
-        window(x: 870, y: 1_791, size: 1.26)
-        let wallpaper: [P] = [(915, 1_809), (945, 1_804), (1_009, 1_813), (1_007, 1_945),
-                              (980, 1_943), (944, 1_948), (917, 1_943), (916, 1_899)]
-        wax.shape(wallpaper, color: white, border: wood, width: 2.3, opacity: 0.70)
-        wax.fill([(915, 1_945), (957, 1_948), (1_010, 1_944), (1_010, 2_010), (910, 2_009)],
-                 color: honey, opacity: 0.58)
-        wax.stroke([(915, 1_945), (938, 1_946), (966, 1_944), (986, 1_947), (1_012, 1_944)],
-                   color: wood, width: 3, opacity: 0.74)
-        for (x, dx): (CGFloat, CGFloat) in [(919, -13), (935, -15), (950, -12),
-                                            (965, -19), (984, -20), (1_001, -15)] {
-            wax.stroke([(x, 1_948), (x - 5, 1_968), (x + dx + 4, 1_990), (x + dx, 2_009)],
-                       color: wood, width: 1.3, opacity: 0.50)
-        }
-
-        // The window, cubby, rug and bowl are all inside the first 12× crop.
-        window(x: 959, y: 1_850, size: 0.86)
-        wax.shape([(930, 1_876), (925, 1_870), (927, 1_866), (931, 1_867),
-                   (935, 1_864), (939, 1_868), (935, 1_876), (931, 1_879)],
-                  color: red, border: red, width: 1.25, opacity: 0.62)
-        wax.stroke([(931, 1_879), (930, 1_887), (928, 1_893)], color: red, width: 0.8, opacity: 0.54)
-
         wax.shape([(940, 1_916), (953, 1_911), (973, 1_912), (987, 1_917), (986, 1_940),
                    (973, 1_943), (950, 1_942), (938, 1_939)], color: honey,
                   border: wood, width: 2.5, opacity: 0.91)
@@ -408,39 +473,16 @@ private final class BackdropPainter {
                    (971, 1_929), (973, 1_935), (973, 1_942)], color: wood,
                   border: wood, width: 1.75, opacity: 0.91)
 
-        wax.shape([(929, 1_963), (936, 1_957), (951, 1_956), (967, 1_958), (982, 1_964),
-                   (980, 1_974), (966, 1_979), (946, 1_978), (931, 1_972)],
-                  color: lilac, border: lilac, width: 2.15, opacity: 0.72)
-        for x: CGFloat in [940, 950, 961, 973] {
-            wax.stroke([(x, 1_961), (x - 3, 1_968), (x - 1, 1_973)],
-                       color: red, width: 1.45, opacity: 0.52)
-        }
         wax.shape([(981, 1_953), (986, 1_951), (997, 1_951), (1_000, 1_955),
                    (996, 1_963), (985, 1_963)], color: lake, border: lake,
                   width: 1.6, opacity: 0.75)
         wax.stroke([(985, 1_951), (988, 1_949), (993, 1_950), (996, 1_951)],
                    color: honey, width: 1.5, opacity: 0.82)
     }
-
-    private func window(x: CGFloat, y: CGFloat, size s: CGFloat) {
-        let panes: [P] = [(-1, 1), (12, -2), (32, 0), (34, 14), (32, 33), (18, 33), (0, 30)]
-        wax.shape(panes.map { (x + $0.0 * s, y + $0.1 * s) }, color: skyBlue,
-                  border: wood, width: 2.7 * s, opacity: 0.83)
-        wax.stroke([(x + 15 * s, y), (x + 17 * s, y + 16 * s), (x + 16 * s, y + 32 * s)],
-                   color: wood, width: 1.7 * s, opacity: 0.71)
-        wax.stroke([(x, y + 15 * s), (x + 15 * s, y + 16 * s), (x + 32 * s, y + 14 * s)],
-                   color: wood, width: 1.7 * s, opacity: 0.71)
-        let curtains: [[P]] = [[(-3, -2), (8, -3), (5, 10), (3, 22), (-6, 25)],
-                               [(25, -3), (34, -1), (34, 10), (39, 25), (29, 23)]]
-        for points in curtains {
-            wax.shape(points.map { (x + $0.0 * s, y + $0.1 * s) }, color: red,
-                      border: red, width: 1.7 * s, opacity: 0.75)
-        }
-    }
 }
 
 /// Short uneven passes leave gaps in the paper instead of a clean vector fill.
-private final class WaxCrayon {
+final class WaxCrayon {
     private let context: CGContext
     private var random = PaperRandom()
 
@@ -534,23 +576,6 @@ private final class WaxCrayon {
                      opacity: opacity * (0.28 + random.next() * 0.44))
                 i += length + Int(random.next() * 4)
             }
-        }
-    }
-
-    func paperGrain() {
-        for pass in 0..<6 {
-            let flecks = CGMutablePath()
-            for _ in 0..<3_700 {
-                let x = random.next() * 1_000
-                let y = random.next() * 2_000
-                let w = 0.22 + random.next() * (pass < 3 ? 3.1 : 1.7)
-                let h = 0.30 + random.next() * (pass < 3 ? 1.8 : 0.9)
-                flecks.addEllipse(in: CGRect(x: x, y: y, width: w, height: h))
-            }
-            let color = pass < 4 ? FieldInk.paper : FieldInk.dark
-            context.setFillColor(color.withAlphaComponent(pass < 4 ? 0.10 + CGFloat(pass) * 0.067 : 0.075).cgColor)
-            context.addPath(flecks)
-            context.fillPath()
         }
     }
 
