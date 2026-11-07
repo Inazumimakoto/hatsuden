@@ -6,12 +6,13 @@
 
 **ビルドと実機確認**
 
-- [ ] Xcodeの `Hatsuden` ターゲットでバージョン `1.0`、ビルド `4`、Bundle ID `jp.hatsuden.works`、署名チームを確認する。
+- [x] アーカイブのバージョン `1.0`、ビルド `4`、Bundle ID `jp.hatsuden.works`、署名チーム `V7XG8HDQL4` を確認した。
+- [x] [署名付きアーカイブ](</Users/inazumimakoto/Library/Developer/Xcode/Archives/2026-11-07/Hatsuden 1.0 (4).xcarchive>) を作成した。現在はApple Development署名で、App Store向け配布処理は次の段階。
 - [ ] 実機で起動し、連打、複数指、ピンチ、売店の購入、追加個体の即時表示、BGMを確認する。
 - [ ] バックグラウンドから復帰し、所持金が加算されることを確認する。
 - [ ] Release構成で広告の同意画面と広告を確認する。通常の開発ビルドはテスト広告IDを使うため、Debugの表示だけで本番広告の準備完了と判断しない。
 - [ ] 広告を最後まで見た場合だけ5分のブーストが付くことを確認する。途中で閉じた場合と通信できない場合も確認する。
-- [ ] Xcodeで実機用の送信先を選び、Product → Archive → Validate App → Distribute App → App Store Connectへ進む。
+- [ ] 作成済みアーカイブをXcodeのOrganizerで開き、Validate App → Distribute App → App Store Connectへ進む。配布署名とプロビジョニングも確認する。
 - [ ] App Store Connectで処理が完了した `1.0 (4)` を確認する。
 
 2026年11月7日時点では、アップロードにXcode 26以降とiOS 26以降のSDKが必要です。現在のXcode 26.1はこの最低条件を満たします。[Appleの提出要件](https://developer.apple.com/news/upcoming-requirements/?id=04282026a)
@@ -35,7 +36,9 @@ Appleは、App Store Connectの掲載情報とアプリ内の両方からプラ�
 
 **App Store Connectの基本情報**
 
-- [ ] 新規アプリのプラットフォームをiOS、主言語を日本語、Bundle IDを `jp.hatsuden.works` にする。
+- [ ] Account Holder本人が更新契約を確認・同意する。現在のApp Store Connectには「ビジネス」でPaid Applications Scheduleを更新するよう通知が表示されている。代理での承諾はしていない。
+- [x] チーム `V7XG8HDQL4` のDeveloper Identifiersで `Hatsuden / jp.hatsuden.works` を登録し、一覧で確認した。
+- [x] [App Store Connectの新規アプリ](https://appstoreconnect.apple.com/apps/6831870090/distribution)をiOS、日本語、Bundle ID `jp.hatsuden.works` で作成した。Apple IDは `6831870090`、SKUは `hatsuden-ios`。ユーザアクセス保存の警告は表示されたが、現在は選択どおり全ユーザがアクセス可能でアプリ作成は完了している。
 - [ ] 名前、サブタイトル、説明、キーワード、プロモーション文を [AppStore-ja.md](AppStore-ja.md) から入力する。
 - [ ] 主カテゴリをゲームにし、カジュアル／シミュレーションなど、実際の遊び方に合うサブカテゴリを選ぶ。
 - [ ] 価格を無料にする。配信地域と公開日を本人の意向に合わせて確定する。
@@ -45,9 +48,12 @@ Appleは、App Store Connectの掲載情報とアプリ内の両方からプラ�
 
 **スクリーンショット**
 
+- [x] 室内の発電、売店、街、火山、宇宙の原寸5枚を `screenshots/raw/` に保存した。
+- [x] 見出し付きの掲載用画像を `screenshots/marketing/1206x2622/` と `screenshots/marketing/1320x2868/` に各5枚生成した。
+- [x] 原寸は1206 × 2622、掲載用は各フォルダー名どおりの寸法で、全15枚がRGB形式であることを確認した。
 - [ ] `Release/screenshots` の原寸画像を確認し、実際のビルド4と内容が一致する画像をアップロードする。
-- [ ] 少なくともiPhone Dynamic Island中型の原寸画像を用意する。iPhone 17の `1206 × 2622` は対応サイズ。
-- [ ] PNGまたはJPEGで、アルファチャンネルのない画像を使う。
+- [x] iPhone Dynamic Island中型の対応サイズ `1206 × 2622` の原寸画像を用意した。
+- [x] 画像はPNG形式で、アルファチャンネルを含まない。
 - [ ] 開発用の縮小プレビューや、別の版の古い画面をアップロードしない。
 - [ ] 室内から始まる画面、動物が増えた画面、売店、広い景色など、遊び方が伝わる順に並べる。
 

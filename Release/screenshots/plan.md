@@ -1,6 +1,6 @@
 # App Store掲載画像の撮影メモ
 
-本アプリはiPhone専用の縦画面です。まずiPhone 17で1206 × 2622 pxのPNGを撮影します。この寸法はAppleのDynamic Island中型ディスプレイ枠で受け付けられます。掲載できる画像は各サイズ1〜10枚で、透過を含められません。大画面枠も用意する場合はiPhone 17 Pro Maxで1320 × 2868 pxを直接撮影します。[Appleのスクリーンショット仕様](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
+本アプリはiPhone専用の縦画面です。iPhone 17で1206 × 2622 pxのPNGを5枚撮影済みです。この寸法はAppleのDynamic Island中型ディスプレイ枠で受け付けられます。掲載できる画像は各サイズ1〜10枚で、透過を含められません。掲載用レイアウトは1206 × 2622 pxと1320 × 2868 pxの2種類を生成しています。後者も同じ実際のキャプチャを縦横比を保って配置したものです。[Appleのスクリーンショット仕様](https://developer.apple.com/help/app-store-connect/reference/app-information/screenshot-specifications)
 
 ## 掲載順と文案
 
@@ -40,6 +40,6 @@ swift Release/screenshots/render.swift Release/screenshots/raw Release/screensho
 
 - アプリアイコンは `Hatsuden/Assets.xcassets/AppIcon.appiconset/AppIcon.png` にあります。1024 × 1024 px、透過なしです。
 - 背景の確認用画像はCodexの作業用フォルダーにあります。複数画面を横に並べた比較画像はレビュー用で、掲載用には各画面の原寸キャプチャを用意します。
-- 開発用の撮影ハーネスは `/tmp/hatsuden-scenery-preview.X6qyIV/` にあります。一時フォルダーのため、撮影が終わったPNGをこのリポジトリの `Release/screenshots/` へ保存します。
+- 今回の撮影用アプリは一時フォルダー `/tmp/hatsuden-storepreview.PSzSkz/` で作り、通常のセーブと別のBundle ID `jp.hatsuden.works.storepreview` で起動しました。撮影後にSimulatorから削除し、ステータスバーの上書きも解除しています。撮影が終わったPNGはこのリポジトリへ保存済みです。
 
-サポートページとプライバシーポリシーの公開URLは、撮影素材とは別にApp Store Connectへ登録する必要があります。現時点で、このリポジトリ内には公開先URLが見つかっていません。
+サポートページとプライバシーポリシーは `https://hatsuden-animals.netlify.app/` で公開済みです。それぞれ `/support.html` と `/privacy.html` を、撮影素材とは別にApp Store Connectへ登録します。
