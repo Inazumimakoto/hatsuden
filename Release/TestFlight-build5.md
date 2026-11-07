@@ -16,7 +16,11 @@
 
 配布先: [発電どうぶつのTestFlight](https://appstoreconnect.apple.com/teams/db67252c-d5c0-43c1-a9e7-c44232290663/apps/6831870090/testflight/ios)
 
-内部グループ「本人用テスト」を作成し、`inazumimakoto@gmail.com` を招待済みです。自動配信を有効にしています。このビルドは `testFlightInternalTestingOnly = true` でアップロードするため、外部TestFlightやApp Storeへは配布できません。公開用には別ビルドを作成します。
+内部グループ「本人用テスト」を作成し、`inazumimakoto@gmail.com` を招待済みです。自動配信を有効にしています。このビルドは `testFlightInternalTestingOnly = true` でアップロードしたため、外部TestFlightやApp Storeへは配布できません。公開用には別ビルドを作成します。
+
+アップロードは成功し、App Store Connectの同グループに [1.0（5）](https://appstoreconnect.apple.com/teams/db67252c-d5c0-43c1-a9e7-c44232290663/apps/6831870090/testflight/ios/832ca54d-da27-4ac4-bbf7-caa611d642c6) が「テスト中」と表示されることを確認しました。テスト内容も登録済みです。iPhoneでは招待メールからTestFlightを開いてビルド5をインストールします。
+
+アップロード時にGoogleMobileAdsとUserMessagingPlatformのdSYM不足の警告が出ましたが、バイナリのアップロードと内部配布は完了しています。Google SDK内のクラッシュを詳しく調べる場合は、対応するシンボルを別途確認します。
 
 実機では、購入後の投入、二本指・三本指の発電、自由ズーム、揺らす連打、終了後の復帰を確認します。大量の車輪を混ぜる場合の負荷、揺れの収束、背景の密度とサイズ感は継続して調整する対象です。
 
